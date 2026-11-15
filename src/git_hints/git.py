@@ -190,8 +190,11 @@ class Repo:
         self,
         # The directory to inspect; `None` uses the current directory.
         cwd: Path | None = None,
+        # Ordered Git global options belonging to an explained command.
+        prefix: Sequence[str] = (),
     ) -> None:
         self.cwd = cwd
+        self.command_prefix = tuple(prefix)
         self._results: dict[tuple[str, ...], Future[GitResult]] = {}
         self._results_lock = threading.Lock()
 
@@ -209,7 +212,9 @@ class Repo:
             # Hand every exception, even `KeyboardInterrupt`, to the threads
             # waiting on this command; otherwise they would wait forever.
             try:
-                future.set_result(run_git(args, self.cwd))
+                future.set_result(
+                    run_git((*self.command_prefix, *args), self.cwd)
+                )
             except BaseException as error:  # noqa: BLE001
                 future.set_exception(error)
         return future.result()

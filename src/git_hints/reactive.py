@@ -9,10 +9,9 @@
 # than a guess.
 #
 # Most reactive hints also inspect the repository after the command runs. When
-# the command's global options point Git at another repository (`-C`,
-# `--git-dir`, `--work-tree`, or `--bare`), inspecting the current directory
-# would describe the wrong repository, so only hints which need nothing beyond
-# the exit code and standard error are evaluated.
+# global options select a repository, inspections reuse that ordered prefix.
+# Unknown global options disable state-dependent checks rather than falling
+# back to the caller's repository.
 #
 # Imports
 # -------
@@ -25,7 +24,8 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 # ### Local
@@ -42,7 +42,7 @@ from .hint import (
     sort_hints,
     summarize,
 )
-from .proactive import Context, merge_conflicts
+from .proactive import Context, divergence_advice, merge_conflicts
 
 # Parsing the Git command
 # -----------------------
@@ -59,8 +59,20 @@ GLOBAL_OPTIONS_WITH_VALUE = {
     "--config-env",
     "--attr-source",
 }
-# Global options which select a repository other than the current directory's.
-REDIRECTING_OPTIONS = {"-C", "--git-dir", "--work-tree", "--bare"}
+GLOBAL_FLAGS = {
+    "--bare",
+    "--no-pager",
+    "--paginate",
+    "-p",
+    "-P",
+    "--no-replace-objects",
+    "--no-optional-locks",
+    "--literal-pathspecs",
+    "--glob-pathspecs",
+    "--noglob-pathspecs",
+    "--icase-pathspecs",
+    "--no-lazy-fetch",
+}
 
 
 @dataclass(frozen=True)
@@ -71,8 +83,8 @@ class GitCommand:
     subcommand: str | None
     # The arguments following the subcommand.
     arguments: Sequence[str]
-    # True when global options redirect Git to another repository.
-    redirected: bool
+    # Ordered global options, or None when their inspection effect is unknown.
+    prefix: tuple[str, ...] | None
 
     # The command as the user could type it again.
     @property
@@ -81,18 +93,28 @@ class GitCommand:
 
 
 def parse_command(argv: Sequence[str]) -> GitCommand:
-    redirected = False
     index = 1
     while index < len(argv) and argv[index].startswith("-"):
         option = argv[index]
-        if option.split("=", 1)[0] in REDIRECTING_OPTIONS:
-            redirected = True
         if option in GLOBAL_OPTIONS_WITH_VALUE:
-            index += 1
+            if index + 1 >= len(argv):
+                return GitCommand(argv, None, [], None)
+            index += 2
+            continue
+        if not (
+            option in GLOBAL_FLAGS
+            or (
+                "=" in option
+                and option.split("=", 1)[0] in GLOBAL_OPTIONS_WITH_VALUE
+            )
+            or (option.startswith(("-C", "-c")) and len(option) > 2)
+        ):
+            return GitCommand(argv, None, [], None)
         index += 1
+    prefix = tuple(argv[1:index])
     if index >= len(argv):
-        return GitCommand(argv, None, [], redirected)
-    return GitCommand(argv, argv[index], argv[index + 1 :], redirected)
+        return GitCommand(argv, None, [], prefix)
+    return GitCommand(argv, argv[index], argv[index + 1 :], prefix)
 
 
 # Return a subcommand's positional arguments.
@@ -182,7 +204,7 @@ class Failure:
     returncode: int
     stderr: str
     # The repository the command ran in, or `None` when inspecting it doesn't
-    # apply: the command was redirected or ran outside a working tree.
+    # apply: the global options are unsupported or it ran outside a work tree.
     repo: Repo | None
 
     def display_path(self, path: str) -> str:
@@ -196,14 +218,14 @@ def reactive_merge_conflicts(failure: Failure) -> Hint | None:
 
 
 def pull_blocked_local_changes(failure: Failure) -> Hint | None:
-    if failure.command.subcommand != "pull":
+    if failure.command.subcommand != "pull" or failure.repo is None:
         return None
     paths = overwritten_paths(failure.stderr)
     if paths is None:
         return None
     # Git refuses to pull at all while conflicts remain; `merge-conflicts`
     # covers that.
-    if failure.repo is not None and failure.repo.unmerged_paths:
+    if failure.repo.unmerged_paths:
         return None
     paths = [failure.display_path(path) for path in paths]
     text = (
@@ -278,7 +300,9 @@ def push_remote(repo: Repo, command: GitCommand, branch: str | None) -> str:
     )
     if positionals:
         return positionals[0]
-    for argument in command.arguments:
+    for index, argument in enumerate(command.arguments):
+        if argument == "--repo" and index + 1 < len(command.arguments):
+            return command.arguments[index + 1]
         if argument.startswith("--repo="):
             return argument.removeprefix("--repo=")
     keys = ["remote.pushDefault"]
@@ -302,7 +326,12 @@ def tracking_branch(repo: Repo, remote: str, destination: str) -> str | None:
         if destination.startswith("refs/")
         else f"refs/heads/{destination}"
     )
-    for refspec in repo.config_all(f"remote.{remote}.fetch"):
+    refspecs = repo.config_all(f"remote.{remote}.fetch")
+    if any(
+        spec.startswith("^") and fnmatchcase(ref, spec[1:]) for spec in refspecs
+    ):
+        return None
+    for refspec in refspecs:
         refspec = refspec.removeprefix("+")
         if refspec.startswith("^") or ":" not in refspec:
             continue
@@ -321,6 +350,16 @@ def tracking_branch(repo: Repo, remote: str, destination: str) -> str | None:
         elif source == ref:
             return target.removeprefix("refs/remotes/")
     return None
+
+
+def current_rejection(repo: Repo, stderr: str) -> re.Match[str] | None:
+    sources = {"HEAD"}
+    branch = repo.current_branch
+    if branch is not None:
+        sources |= {branch, f"refs/heads/{branch}"}
+    return next(
+        (r for r in REJECTED.finditer(stderr) if r["source"] in sources), None
+    )
 
 
 def push_rejected_non_fast_forward(failure: Failure) -> Hint | None:
@@ -346,12 +385,7 @@ def push_rejected_non_fast_forward(failure: Failure) -> Hint | None:
     )
     # Find the rejection of the current branch, which the commands below can
     # integrate.
-    current = None
-    if repo is not None:
-        sources = {"HEAD"}
-        if branch is not None:
-            sources |= {branch, f"refs/heads/{branch}"}
-        current = next((r for r in rejections if r["source"] in sources), None)
+    current = current_rejection(repo, failure.stderr) if repo else None
     if current is None or repo is None:
         if repo is None:
             text += " Run the commands below in the repository you pushed from."
@@ -478,8 +512,93 @@ def stash_local_changes(failure: Failure) -> Hint | None:
     )
 
 
+PULL_OPTIONS_WITH_VALUE = {
+    "-s",
+    "--strategy",
+    "-X",
+    "--strategy-option",
+    "--depth",
+    "--shallow-since",
+    "--shallow-exclude",
+    "--upload-pack",
+    "--jobs",
+    "-j",
+    "--server-option",
+    "--negotiation-tip",
+    "--filter",
+}
+
+
+def integrates_upstream(repo: Repo, command: GitCommand, stderr: str) -> bool:
+    branch = repo.current_branch
+    if branch is None:
+        return False
+    remote = repo.config(f"branch.{branch}.remote")
+    merges = repo.config_all(f"branch.{branch}.merge")
+    if not remote or len(merges) != 1:
+        return False
+    if command.subcommand == "push":
+        rejection = current_rejection(repo, stderr)
+        if rejection is None or push_remote(repo, command, branch) != remote:
+            return False
+        destination = rejection["destination"]
+        if not destination.startswith("refs/"):
+            destination = f"refs/heads/{destination}"
+        return destination == merges[0]
+    if command.subcommand == "pull":
+        positionals = positional_arguments(
+            command.arguments, PULL_OPTIONS_WITH_VALUE
+        )
+        if not positionals:
+            return True
+        if positionals[0] != remote or len(positionals) > 2:
+            return False
+        if len(positionals) == 1:
+            return True
+        ref = positionals[1]
+        if not ref.startswith("refs/"):
+            ref = f"refs/heads/{ref}"
+        return ref == merges[0]
+    return False
+
+
+def pull_diverged(failure: Failure) -> Hint | None:
+    if failure.command.subcommand != "pull" or not any(
+        fragment in failure.stderr for fragment in PULL_DIVERGED
+    ):
+        return None
+    if failure.repo and (
+        failure.repo.unmerged_paths or failure.repo.operations.combining
+    ):
+        return None
+    hint = divergence_advice()
+    if failure.repo and integrates_upstream(
+        failure.repo, failure.command, failure.stderr
+    ):
+        return replace(hint, priority=Priority.ERROR_BLOCKED)
+    # The diagnostic proves divergence, but not which history to integrate.
+    # Keep explicit placeholders instead of silently choosing the upstream.
+    return replace(
+        hint,
+        priority=Priority.ERROR_BLOCKED,
+        text=hint.text + " Confirm the pull remote and branch before retrying.",
+        commands=(
+            Command(
+                "`git pull --no-rebase <remote> <branch>`",
+                "Git integrates the selected history; resolve any conflicts.",
+            ),
+            Command(
+                "`git pull --rebase <remote> <branch>`",
+                "Git replays local commits on the selected history.",
+                Safety.CAUTION,
+            ),
+        ),
+    )
+
+
 REACTIVE_CHECKS: list[Callable[[Failure], Hint | None]] = [
     reactive_merge_conflicts,
+    pull_diverged,
     pull_blocked_local_changes,
     push_rejected_non_fast_forward,
     stash_local_changes,
@@ -611,6 +730,7 @@ def record_integration_outcome(
             upstream.returncode != 0
             or repo.unmerged_paths
             or repo.operations.combining
+            or not integrates_upstream(repo, command, stderr)
         ):
             return False
         count += 1
@@ -625,6 +745,25 @@ def record_integration_outcome(
 # Running the command
 # -------------------
 #
+# Explain where commands without a global prefix should be run. Keep the
+# original launch directory for relative -C, --git-dir, and --work-tree values.
+def suggestion_context(repo: Repo, command: GitCommand) -> str:
+    target = repo.check("rev-parse", "--show-toplevel").stdout.strip()
+    directory = str(repo.cwd or Path.cwd())
+    note = (
+        f" These suggestions target {code(target)}. "
+        f"Run the suggested commands from {code(directory)}, retaining the "
+        "original Git environment."
+    )
+    if command.prefix:
+        prefix = " ".join(shell_quote(w) for w in ("git", *command.prefix))
+        note += (
+            f" For commands shown without global options, use {code(prefix)} "
+            "in place of `git`."
+        )
+    return note
+
+
 # Copy Git's captured standard error to ours unchanged.
 def emit_stderr(data: bytes) -> None:
     sys.stderr.flush()
@@ -664,12 +803,47 @@ def explain(
     repo: Repo | None = None
     show_rebase = False
     try:
-        if not command.redirected and Repo().work_tree == "inside":
-            repo = Repo()
+        candidate = Repo(prefix=command.prefix or ())
+        if command.prefix is not None:
+            try:
+                location = candidate.work_tree
+            except InspectionError:
+                # A failed command may name a missing or unusable target.
+                # Keep its diagnostic and exit code; do not inspect elsewhere.
+                if returncode == 0 or not (
+                    command.prefix
+                    or os.environ.get("GIT_DIR")
+                    or os.environ.get("GIT_WORK_TREE")
+                ):
+                    raise
+                location = "not-a-repo"
+            if location == "inside":
+                repo = candidate
+            elif location == "outside":
+                # --git-dir/--work-tree can operate on a work tree while
+                # the launch directory is outside it. Resolve with Git first,
+                # then make inspections relative to that work tree.
+                root = candidate.run("rev-parse", "--show-toplevel")
+                if root.returncode == 0 and root.stdout.strip():
+                    git_dir = candidate.check(
+                        "rev-parse", "--absolute-git-dir"
+                    ).stdout.strip()
+                    repo = Repo(
+                        prefix=(
+                            *candidate.command_prefix,
+                            "--git-dir",
+                            git_dir,
+                            "--work-tree",
+                            root.stdout.strip(),
+                            "-C",
+                            root.stdout.strip(),
+                        )
+                    )
+        if repo is not None:
             show_rebase = record_integration_outcome(
                 repo, command, returncode, stderr
             )
-    except (GitLaunchError, InspectionError) as error:
+    except (GitLaunchError, InspectionError, OSError) as error:
         errors.append(error)
 
     lines = [] if ids_only else [f"Git exited with code {returncode}."]
@@ -690,6 +864,13 @@ def explain(
         if show_rebase:
             hints.append(rebase_after_repeated_integration_failures())
         hints = sort_hints(hints)
+        if repo and hints and not ids_only:
+            try:
+                note = suggestion_context(repo, command)
+                hints = [replace(hint, text=hint.text + note) for hint in hints]
+            except (GitLaunchError, InspectionError) as error:
+                errors.append(error)
+                hints = []  # Do not print advice with an unknown location.
         if ids_only:
             lines += [hint.id for hint in hints]
         elif hints:

@@ -23,7 +23,7 @@ extend-select = ["I", "UP", "B", "E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tests"]
+pythonpath = ["src", "tests"]
 # Tests spend most of their time waiting for Git processes, so run them in
 # parallel; pass `-n 0` to run serially (for example, to use a debugger).
 addopts = "-n auto"

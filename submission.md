@@ -62,7 +62,7 @@ Using the GPT-5.6 Luna in VSCode Codex, medium effort with the following prompt:
     Return findings grouped by severity. If no relevant issues remain, explicitly state that.
 
 #### Including strikethrough indicates LLM output that I deemed incorrect or irrelevant, last-draft output produced is:
-    
+
 Low severity
 Encoding corruption remains in the repository-redirection paragraph
 
@@ -87,4 +87,77 @@ The duplicated redirection rule has been replaced with a cross-reference at spec
 No high- or medium-severity issues remain within the git-hints explain scope.
 
 
+Final submission
+----------------
+
+#### Contributions
+
+(User's' contributions)
+
+#### Specification review rounds
+
+One final specification-review round has been completed; the draft review
+rounds are recorded separately above. Comparing the attached review, examining
+additional gaps, prioritizing fixes, and planning implementation were steps in
+this round, not separate rounds. The count includes 27 findings from the attached
+review and 6 additional findings; it does not mean every finding was accepted
+or fixed. Accepted high- and medium-severity corrections were applied to the
+specification; application code was not changed during that specification-review
+round.
+
+| Round | Findings | Main changes made |
+| --- | --- | --- |
+| 1 | 33 identified (27 attached + 6 additional) | Clarified argument forwarding, repository and path context, failure-counter eligibility, reactive guidance, and output behavior while adding minimal implementation guidance. |
+
+#### Last specification review
+
+(LLM and prompt used)
+
+(LLM output, possibly with strikethrough)
+
+#### Implementation review rounds
+
+One implementation-review round covers `git-hints explain` and the shared
+helpers and tests needed by that section. Its internal review, fix, and
+verification passes are combined below; earlier implementation planning is
+excluded. The 9 findings comprise 6 initial findings and 3 follow-up findings,
+grouping related symptoms and excluding routine formatting. Final verification
+found no further substantive issues within this scope.
+
+| Round | Findings | Main changes made |
+| --- | --- | --- |
+| 1 | 9 | Fixed argument forwarding, repository and command context, failure-counter eligibility, divergence guidance, push destination and fetch-refspec handling, unresolved-target exit behavior, and source-based regression testing, with all 76 tests passing. |
+
+#### Last implementation review
+
+LLM: Codex (GPT-6 family); the exact model variant and effort setting were not
+exposed in the session metadata and should be copied from the UI for submission.
+
+User request initiating implementation review:
+
+> Is the implementation review was provided? If not initiate it and provide implementations
+
+Final review criteria applied in this session:
+
+> Review only the implementation of `git-hints explain` against its revised
+> specification, including shared helpers directly required by that section.
+> Check whether previous findings are fixed, whether the fixes introduce new
+> contradictions or regressions, and whether important requirements remain
+> unimplemented. Use the code and regression results as evidence; avoid unrelated
+> features or significant redesign. Report substantive findings by severity, or
+> state that none remain within this scope.
+
+Last review output:
+
+No high- or medium-severity findings remain within the reviewed `git-hints
+explain` implementation scope. Argument forwarding, redirected repository
+inspection, command context, upstream-specific failure counting, immediate
+divergence guidance, and push destination resolution have regression coverage.
+Unknown global-option effects conservatively disable repository-dependent
+checks, as permitted by the specification. This does not certify unrelated
+proactive hints or complete the separate specification-review requirement.
+
+Validation used the configured Python 3.11.2 environment and Git repositories
+isolated by the test fixtures. Ruff lint and format checks passed for `src` and
+`tests`; `ty check src tests` passed. The full suite passed: 76 tests.
 

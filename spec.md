@@ -38,31 +38,35 @@ CLI commands
       redirected from `subprocess.DEVNULL`, output captured, and a 10-second
       timeout. Fetch from the remote associated with the current branch's
       upstream, or from `origin` if there is no upstream but `origin` exists. If
-      neither exists, skip fetching and treat remote information as cached. Skip
-      fetching outside a working tree. A successful fetch permits `push-ahead`,
+      neither exists, skip fetching and treat remote information as cached. If
+      the upstream remote is `.`, skip fetching without falling back to
+      `origin`; local-upstream hints describe local branches and omit remote
+      and "as of last fetch" wording. Skip fetching outside a working tree.
+      A successful fetch permits `push-ahead`,
       `behind`, and `diverged` hints to omit their "as of last fetch" qualifier.
       If fetching fails, times out, or is skipped for lack of an applicable
       remote, continue inspecting using cached information; this is not an
       unexpected inspection failure. After the branch context line, print `Fetch
       failed; showing results as of last fetch.` for a failed or timed-out fetch
       (except under `--ids-only`). Retain "as of last fetch" on affected hints.
-      Without `--fetch`, never fetch and label `push-ahead`, `behind`, and
-      `diverged` hints "as of last fetch."
+      Without `--fetch`, never fetch and label remote-upstream `push-ahead`,
+      `behind`, and `diverged` hints "as of last fetch."
 2. **`git-hints explain -- <git command>`**: execute the supplied Git command,
    capture its exit code and standard error, and select reactive hints from the
-   resulting error. Return the same exit code as Git. After processing applicable git-hints options and an optional -- separator, the remaining Git command argument list must begin with the exact word git; otherwise print an error to standard error, run nothing, and exit 2.
+   resulting error. Return the same exit code as Git, except for the inspection
+   and launch failures described below. The command must begin with the exact
+   word `git`; otherwise print an error to stderr, run nothing, and exit 2.
 
+   * A `--` separator before the Git command is recommended but optional. From
+     the first command argument `git` onward, pass every argument unchanged to
+     Git, including `--help`, `--all`, `--ids-only`, and `--fetch`.
 
-
-   * A -- separator before the Git command is recommended but optional. If the separator is present, --fetch before the separator is a git-hints option and --fetch after the separator is part of the Git command. If the separator is absent, --fetch before the first argument equal to git is a git-hints option; --fetch at or after that argument is part of the Git command.
-
-   * Global options, where applicable, precede explain: for example,
-     git-hints --ids-only explain -- git push. The --fetch option is invalid
-     with explain and must be rejected before Git is launched. When --fetch is
-     supplied as a git-hints option for explain, exit with code 2, write the
-     usage error to standard error, and write nothing to standard output. A
-     --fetch appearing after the -- separator is part of the Git command and
-     is not handled as a git-hints option.
+   * Global options precede `explain`, for example `git-hints --ids-only
+     explain -- git push`. Also recognize `--fetch` between `explain` and the
+     separator or command, solely to reject it. A wrapper `--fetch` is invalid
+     with `explain`: exit 2, write the usage error to stderr, write nothing to
+     stdout, and do not launch Git. Other global options after `explain` and
+     before the command are usage errors.
 
    * Emit captured Git standard error to standard error. In normal output, print
      `Git exited with code <n>.` before any reactive hint blocks on standard
@@ -77,7 +81,8 @@ CLI commands
      `--all`, the reactive output remains complete.
 
    * Configure Typer to accept extra arguments and ignore unknown options
-     (`allow_extra_args=True`, `ignore_unknown_options=True`), so Git receives
+     (`allow_extra_args=True`, `ignore_unknown_options=True`, and
+     `allow_interspersed_args=False`), so Git receives
      flags and arguments intact. Examples: `git-hints explain -- git pull
      --rebase` and `git-hints explain -- git reset --hard HEAD~1`.
 
@@ -207,8 +212,9 @@ Hint structure
    class; class order always wins. Other IDs sort by Unicode code point after
    the listed IDs within their class. Future IDs that require special precedence
    must be added to this list explicitly. Where detached HEAD includes commits
-   not contained in any local branch (check `git for-each-ref --contains HEAD
-   refs/heads`), classify `detached-head` as `data-loss risk`; otherwise
+   not contained in any local branch, tag, or remote-tracking ref (check
+   `git for-each-ref --contains HEAD refs/heads refs/tags refs/remotes`),
+   classify `detached-head` as `data-loss risk`; otherwise
    classify it as `informational` unless its individual definition specifies a
    higher applicable class.
 
@@ -239,6 +245,10 @@ Hint structure
    unresolved conflicts. An ongoing but healthy bisect is not necessarily an
    error: explain the state and suppress only incompatible suggestions.
 
+   Use the same operation detection across hint checks. A `rebase-apply`
+   directory containing `applying` denotes unsupported `git am`, not rebase;
+   suppress incompatible advice without inventing continuation guidance for it.
+
 8. **IDs and output blocks**: each hint must have a unique, permanent lowercase
    ASCII kebab-case ID matching `[a-z][a-z0-9]*(-[a-z0-9]+)*`, shared across
    proactive and reactive hint definitions. IDs do not depend on list positions
@@ -246,7 +256,10 @@ Hint structure
    test assertions and, in future, `--exclude` and `--dismiss`. In normal output
    and with `--all`, each hint starts with a line exactly `ID: <id>`, followed
    by `Priority: <class>`, its hint text and documentation references, `Git
-   stage: <sentence>`, `Command: <command>`, and `Result: <expected outcome>`.
+   stage: <sentence>`, and one or more `Command: <command>` / `Result:
+   <expected outcome>` pairs. Place each command's `Caution:` or `Warning:`
+   prefix immediately after `Command:`. The hint's aggregate safety is model
+   data; a separate `Safety:` output line is not required.
    Each block ends immediately before the next `ID:` or at the end of output.
    There is no separate title field: tests should identify hints by ID rather
    than by an incidental heading. Place any additional-hints notice ahead of the
@@ -539,7 +552,8 @@ The Conditions of the hints below assume this check and do not repeat it.
   upstream. The hint applies when `<behind>` is above 0 and `<ahead>` is 0. If
   the branch is also ahead, the `diverged` hint applies instead. These counts
   use the last-fetched remote-tracking branch, so label the hint "as of last
-  fetch" (see `git-hints --fetch`).
+  fetch" (see `git-hints --fetch`). For a local upstream, describe the other
+  local branch instead and omit the fetch qualifier.
 
 * Test case:
 
@@ -598,8 +612,9 @@ The Conditions of the hints below assume this check and do not repeat it.
   it, as of the last fetch. Run `git status --porcelain=v2 --branch` and read `#
   branch.ab +<ahead> -<behind>`; the hint applies when both numbers are above 0.
   When it applies, do not show the `behind` or `push-ahead` hints, because this
-  hint replaces them. Label the hint "as of last fetch" (see `git-hints
-  --fetch`). Do not display this hint while a merge is in progress (`git
+  hint replaces them. Label remote-upstream guidance "as of last fetch" (see
+  `git-hints --fetch`); describe local upstreams as local branches without that
+  qualifier. Do not display this hint while a merge is in progress (`git
   rev-parse -q --verify MERGE_HEAD` exits 0) or while the index has unresolved
   entries (`git diff --name-only --diff-filter=U` returns paths).
 
@@ -738,13 +753,17 @@ The Conditions of the hints below assume this check and do not repeat it.
   override should be corrected locally. These settings identify commit authors;
   they do not sign the user into GitHub.
 
-* ID: `commit-identity`, safety: safe.
+* ID: `commit-identity`, priority class: error/blocked, safety: safe.
 
 * Conditions: Check the effective Git configuration by running `git config --get
   user.name` and `git config --get user.email`. An exit code of 1 or an empty
   returned value means that setting is missing; other nonzero exit codes are
   inspection errors and must not trigger this hint. Trigger the hint when either
   setting is missing or empty.
+
+* Test case: Unset each identity setting in turn and verify the hint appears
+  with `error/blocked` priority. Also test an empty local override of a valid
+  global value; the suggested correction must use `--local`.
 
 ### Stage or ignore untracked files
 
@@ -759,7 +778,7 @@ The Conditions of the hints below assume this check and do not repeat it.
 
 * Command: Run `git status` to inspect files listed under "Untracked files:".
   The hint should dynamically identify up to five ordinary untracked paths and
-  suggest `git add <path>` for each, substituting the actual filename or path.
+  suggest `git add -- <path>` for each, substituting the actual filename or path.
   For files that should be ignored, display up to five matching paths and
   suggest appropriate `.gitignore` patterns. Omit either group if no applicable
   files exist. After staging a file, `git status` lists it under "Changes to be
@@ -783,12 +802,15 @@ The Conditions of the hints below assume this check and do not repeat it.
 
   Apply these rules to nested paths as well as paths at the repository root.
 
-  List up to five ordinary untracked paths and recommend `git add <path>` for
+  List up to five ordinary untracked paths and recommend `git add -- <path>` for
   each, substituting the actual path. Quote or escape filenames correctly for
-  the user's shell.
+  the supported display shell (PowerShell on Windows, POSIX shell elsewhere).
+  Use the shared path-command builder and an option terminator before paths.
 
   Separately list up to five ignore candidates and suggest matching `.gitignore`
-  patterns. Omit either group if empty.
+  patterns. Present these as candidates for the user to confirm, since names
+  such as `build` and `dist` can also contain source files. Omit either group
+  if empty.
 
   Do not display the hint when no untracked files remain. Unexpected Git command
   failures are inspection errors, not evidence of untracked files.
@@ -809,7 +831,7 @@ The Conditions of the hints below assume this check and do not repeat it.
      `git status --porcelain=v1` and verify that `?? notes.txt` appears. Run
      `git-hints --all --ids-only` and verify that `untracked-files` is present
      as a complete output line. Run `git-hints --all` separately and verify it
-     recommends `git add notes.txt` and includes the official Git documentation
+     recommends `git add -- notes.txt` and includes the official Git documentation
      links.
   4. Run `git add notes.txt`. Check that `git status --porcelain=v1` reports it
      staged rather than untracked. Run `git-hints --all --ids-only` and verify
@@ -856,9 +878,10 @@ The Conditions of the hints below assume this check and do not repeat it.
   staging area, or both, but only staged changes will be included in the next
   commit in the local repository.
 
-* Command: Run `git status` to review changed files and `git diff HEAD` to
-  inspect the changes relative to the last commit. Run `git add <files>` to
-  stage the changes you want to save, then `git diff --cached` to review what
+* Command: Run `git status` to review changed files, `git diff` to inspect
+  unstaged changes, and `git diff --cached` to inspect staged changes. Run
+  `git add -- <files>` to stage the changes you want to save, then
+  `git diff --cached` to review what
   will be committed. When ready, run `git commit -m "Describe your changes"`;
   afterward, Git creates a new local commit containing the staged changes.
   Verify the result with `git status`.
@@ -878,7 +901,8 @@ The Conditions of the hints below assume this check and do not repeat it.
   commit. Exit code 0 means a commit exists; exit code 1 means no commit exists,
   so do not trigger the hint. Other nonzero codes are inspection errors.
 
-  Run `git ls-tree -r --name-only -z HEAD` to enumerate files tracked in `HEAD`.
+  Run `git ls-tree -r --full-tree --name-only -z HEAD` to enumerate files tracked
+  in `HEAD` throughout the repository, including from a subdirectory.
   Let T be the number of distinct paths returned.
 
   Determine the set of changed paths by taking the union of the following
@@ -972,9 +996,10 @@ The Conditions of the hints below assume this check and do not repeat it.
 * Hint: You are in
   [detached HEAD](https://git-scm.com/docs/git-checkout#_detached_head "HEAD points at a commit instead of a branch; new commits belong to no branch").
   Create a branch if you want to keep working here and give your commits a
-  branch name. When Conditions step 5 finds that HEAD is on no local branch,
-  add: "Your commits made here are not on any branch; create a branch before
-  switching away or they will be hard to find."
+  branch name. When Conditions step 5 finds no containing local branch, add:
+  "HEAD is not contained in a local branch; create a branch if you want to keep
+  working here." If no tag or remote-tracking ref contains it either, explain
+  that switching away leaves the current commits without a named ref.
 
 * Git stage: You are working in the local repository at a specific commit
   instead of on a named local branch.
@@ -992,8 +1017,8 @@ The Conditions of the hints below assume this check and do not repeat it.
   away would leave commits behind.
 
 * ID: `detached-head`, priority class: informational, or `data-loss risk` when
-  Conditions step 5 finds that HEAD is on no local branch (see Priority in Hint
-  structure), safety: safe.
+  Conditions step 5 finds no containing branch, tag, or remote-tracking ref,
+  safety: safe.
 
 * Conditions:
 
@@ -1018,10 +1043,13 @@ The Conditions of the hints below assume this check and do not repeat it.
   5. Run `git for-each-ref --contains HEAD --format=%(refname:short)
      refs/heads`, passing `--format=%(refname:short)` as one argument with no
      quote characters. Empty output with exit code 0 means HEAD is on no local
-     branch, so commits made here can be lost: use priority class `data-loss
-     risk` and add the warning sentence to the hint text. Nonempty output means
-     at least one local branch contains HEAD: use `informational` and show the
-     `git switch <branch>` command. Other exit codes are inspection errors.
+     branch. In that case also check `git for-each-ref --contains HEAD
+     refs/tags refs/remotes`: use `data-loss risk` only if that succeeds with
+     empty output too; otherwise use `informational`. Remote-tracking refs can
+     change, so creating a local branch remains useful before continuing work.
+     Nonempty local-branch output means at least one local branch contains HEAD:
+     use `informational` and show the `git switch <branch>` command. Other exit
+     codes are inspection errors.
   6. Display `detached-head` only when HEAD is detached at a valid commit
      outside a submodule and neither a rebase nor a bisect is in progress.
 * Related output: In normal output and `--all`, the repository context line must
@@ -1476,6 +1504,21 @@ The Conditions of the hints below assume this check and do not repeat it.
       4. Run `git revert --abort`, then `git-hints --all --ids-only`; verify
          that `operation-in-progress` is absent.
 
+### Bisect in progress
+
+* Hint: A bisect is in progress; test this commit and mark it good or bad.
+  Link to [git bisect](https://git-scm.com/docs/git-bisect#_basic_bisect_commands "Find the commit that introduced a change").
+* Git stage: Git is checking commits in the local repository to narrow down
+  where a change began.
+* Command: `git bisect good` or `git bisect bad` after testing; Git selects the
+  next commit or identifies the first bad commit. Alternatively, `git bisect
+  reset` ends the bisect and returns to its starting state.
+* ID: `bisect-in-progress`, priority class: informational, safety: safe.
+* Conditions: The Git path `BISECT_START` exists. Reuse shared operation
+  detection; do not classify an otherwise healthy bisect as an error.
+* Test case: Start a bisect, verify this ID appears, then reset and verify it
+  disappears.
+
 ### Stop tracking ignored files?
 
 * Hint: Do you want Git to stop tracking files that match active
@@ -1491,9 +1534,10 @@ The Conditions of the hints below assume this check and do not repeat it.
   previous commits, so Git tracks them even though active ignore rules match
   their paths.
 
-* Command: For each file, run `git rm --cached <file>` (`git rm -r --cached
+* Command: For each file, run `git rm --cached -- <file>` (`git rm -r --cached --
   <directory>` for directories). If a matching rule was newly added or modified
-  in a project `.gitignore`, stage that file with `git add .gitignore`. Review
+  in a project ignore file, stage that file with `git add -- <ignore-file>`;
+  do not assume it is the root `.gitignore`. Review
   the staged changes with `git diff --cached`, then run `git commit -m "Stop
   tracking <file>"`. Expected result: after `git rm --cached`, previously
   committed files show `deleted: <file>` under changes to be committed in `git
@@ -1543,7 +1587,8 @@ The Conditions of the hints below assume this check and do not repeat it.
   4. Run `git-hints --all` and require exit code 0. In the `tracked-but-ignored`
      block, verify that both `debug.log` and `my notes.log` appear (the second
      one quoted correctly in the command), that `foo.txt` does not appear, and
-     that the block contains `git rm --cached`, `git add .gitignore`, `git diff
+     that the block contains `git rm --cached`, guidance to stage the changed
+     `.gitignore`, `git diff
      --cached`, `git commit`, `earlier commits`,
      `https://git-scm.com/docs/git-rm`, and
      `https://git-scm.com/docs/gitignore`. Run `git-hints --all --ids-only`;
@@ -1570,9 +1615,31 @@ The Conditions of the hints below assume this check and do not repeat it.
 `git-hints explain -- git <command> [<args>...]`
 ------------------------------------------------
 
-Reactive hints explain failures of commands executed through git-hints explain. Use the shared CLI execution and output rules rather than redefining them here. Evaluate repository-state conditions against the repository targeted by the command. Git global repository-redirection options must be processed before identifying the Git subcommand. Resolve repository-redirection options using Git’s option order and relative-path semantics, including repeated -C options and combinations of --git-dir with --work-tree. If the resulting repository or applicable work tree cannot be identified unambiguously, skip repository-state-dependent conditions. Hints based only on the command, exit code, and captured standard error may still be evaluated.
+Reactive hints explain failures of commands executed through `git-hints explain`.
+Use the shared CLI execution and output rules. Evaluate every repository-state
+condition, including failure counting, against the command's target repository.
+Retain recognized Git global options in their original order and pass the
+relevant prefix to inspection commands, letting Git resolve repository and
+relative-path semantics. Support repeated `-C`, `--git-dir`, `--work-tree`, and
+command-scoped configuration such as `-c`; parse option values before identifying
+the subcommand. Preserve inherited Git repository-selection environment variables.
+If an option's effect cannot be handled reliably, skip state-dependent hints
+rather than inspect the caller's repository. Diagnostic-only hints may remain.
+Suggested commands must preserve the target context or explicitly say where to
+run them. Reuse the repository runner and command builder for this context.
 
+### Divergent pull
 
+A failed `git pull` reporting "Need to specify how to reconcile divergent
+branches" or "Not possible to fast-forward" triggers reactive `diverged`
+guidance immediately, without waiting for the repeated-failure threshold.
+Reuse the proactive hint's documentation, stage explanation, and integration
+choices, with `error/blocked` priority and `caution` safety. Recognize the failure
+from its diagnostic rather than requiring cached ahead/behind counts. If the
+pull destination is uncertain, use placeholders instead of assuming the upstream.
+Keep the repeated-failure suggestion supplementary and display it afterward.
+Test that the first qualifying failed pull receives this guidance and that an
+unrelated failure does not.
 
 Diagnostic-based recognition supports English Git messages; display unrecognized
 diagnostics on stderr without guessing a matching hint. In the tests below,
@@ -1898,7 +1965,8 @@ solely to check its hints.
   error/blocked, safety: caution.
 
 * Conditions: Track qualifying integration failures separately for each local
-  branch. Store the failure state in git-hints/integration-failures.json at the path returned by git rev-parse --git-path git-hints/integration-failures.json, evaluated in the repository targeted by the explained Git command.
+  branch. Store state at the path returned by `git rev-parse --git-path
+  git-hints/integration-failures.json` in the target repository.
 
   Key each record by the full branch reference returned by `git symbolic-ref
   --quiet HEAD`. Store the failure count and the current `HEAD` commit ID. If
@@ -1915,13 +1983,21 @@ solely to check its hints.
   Match the relevant fragments in Git's captured error output, rather than
   requiring complete lines to match.
 
+  Count only failures integrating the current branch with its configured
+  upstream. Reuse push-rejection source and destination resolution; exclude
+  another source branch, another destination, and explicit pulls from elsewhere.
+  If this relationship cannot be established reliably, do not increment the
+  counter. Keep the existing storage and reset rules.
+
   Do not count authentication failures, network failures, missing upstream
-  branches, dirty working trees, or unresolved conflicts. Do not count a failed
-  `git pull --rebase`. Do not recommend rebasing while a merge or rebase is in
+  branches, failures caused by dirty working trees, or unresolved conflicts.
+  Do not count a failed `git pull --rebase`. Do not recommend rebasing while a
+  merge or rebase is in
   progress. An upstream branch is required before counting an integration
   failure toward a rebase recommendation.
 
-   Skip failure counting outside a working tree, in detached HEAD, or when the target repository or work tree cannot be resolved reliably. Do not skip failure counting merely because a repository-redirection option was used.
+  Skip failure counting outside a working tree, in detached HEAD, or when the
+  target cannot be resolved reliably. Redirection alone is not a reason to skip.
 
   Display the hint on the fifth qualifying failure for the same branch. Reset
   its count to zero when:
@@ -2087,7 +2163,22 @@ codes, so no additional Git library is required.
   environment. Do not claim to recover the result of an earlier command run
   outside `git-hints explain`.
 
-   Apply the repository-redirection and target-resolution rules defined in the git-hints explain section above.
+  Apply the repository-redirection and target-resolution rules defined in the
+  `git-hints explain` section above.
+
+For inspection, use a consistent repository-root path base, including when
+invoked from a subdirectory. Convert displayed file operands to paths usable
+from the suggested command's working directory. Reuse the repository path
+helper and path-command builder; for commands such as `git add` and `git rm`,
+place `--` before substituted file operands as well as quoting them. Display
+commands for PowerShell on Windows and a POSIX shell elsewhere; do not promise
+that one quoting convention works in every shell.
+
+Keep implementation changes within the existing CLI, repository runner, hint
+builders, and renderer. Share operation detection and divergence advice instead
+of adding separate rule systems. Inspection commands use a controlled English
+locale; the user's explained command retains its environment and terminal
+behavior.
 
 For both modes, pass arguments separately with `shell=False` and `check=False`.
 Interpret `returncode` according to each command's documented meaning; expected
@@ -2095,7 +2186,9 @@ nonzero codes are not automatically application errors. Report unexpected
 failures separately and suppress hints that depend on the failed commands. If
 Git ran, return Git's exit code, unless an unexpected inspection failure occurs.
 If Git cannot be launched, report that failure instead of inventing a Git exit
-code or repository condition.
+code or repository condition. Launch and unexpected inspection failures are
+reported on stderr with a `git-hints:` prefix and return exit code 1. Continue
+displaying hints whose required inspections succeeded. Usage errors return 2.
 
 Plain `git-hints` exits 0 whenever inspection completes, whether or not any hint
 is triggered. It exits nonzero only when it reports an unexpected inspection
@@ -2181,3 +2274,10 @@ running the tests.
 Repository setup commands must exit successfully; fail the test immediately if
 one does not. Run any command that is expected to fail as part of the behavior
 under test separately, and explicitly verify its expected exit code and output.
+
+Review regression coverage should stay focused: verify both separator forms
+preserve Git's `--help`, wrapper `--fetch` is rejected before launch, redirected
+inspections and counters use the target, and unrelated destinations do not
+increment the counter. Include repeated relative `-C` and combined `--git-dir`
+and `--work-tree` cases, plus a subdirectory invocation and a leading-dash
+filename. Extend existing tests rather than introduce a broad new test matrix.

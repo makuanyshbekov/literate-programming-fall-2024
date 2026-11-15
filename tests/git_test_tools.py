@@ -61,6 +61,12 @@ def git_setup(
     monkeypatch.setenv("GIT_EDITOR", "true")
     # Keep Git's messages in English.
     monkeypatch.setenv("LC_ALL", "C")
+    # CLI subprocesses must exercise this checkout, not an installed wheel.
+    source = str(Path(__file__).resolve().parents[1] / "src")
+    inherited = os.environ.get("PYTHONPATH")
+    monkeypatch.setenv(
+        "PYTHONPATH", source + (os.pathsep + inherited if inherited else "")
+    )
 
 
 # Set the isolated environment's global identity.

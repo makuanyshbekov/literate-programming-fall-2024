@@ -1,0 +1,185 @@
+# Regression coverage from the final review of `git-hints explain`.
+import json
+from pathlib import Path
+
+import pytest
+from git_test_tools import (
+    blocks,
+    commit_file,
+    config_user,
+    git,
+    make_repo,
+    make_temps,
+    output_ids,
+    run_hints,
+    write,
+)
+from test_explain import REBASE_HINT, diverged_clones, explain, rejected_pushes
+
+
+@pytest.mark.parametrize("separator", [[], ["--"]])
+def test_explain_forwards_git_help(
+    tmp_path: Path, separator: list[str]
+) -> None:
+    result = run_hints(tmp_path, "explain", *separator, "git", "--help")
+    expected = git(tmp_path, "--help")
+    assert result.returncode == expected.returncode
+    assert result.stdout.startswith(expected.stdout)
+    assert "Git exited with code 0." in result.stdout
+
+
+@pytest.mark.parametrize("separator", [[], ["--"]])
+def test_explain_rejects_fetch_after_subcommand(
+    tmp_path: Path, separator: list[str]
+) -> None:
+    result = run_hints(
+        tmp_path, "explain", "--fetch", *separator, "git", "init", "created"
+    )
+    assert result.returncode == 2
+    assert "--fetch cannot be used with explain" in result.stderr
+    assert result.stdout == ""
+    assert not (tmp_path / "created").exists()
+
+
+@pytest.mark.parametrize("selection", ["relative", "paths", "environment"])
+def test_explain_inspects_target_and_preserves_work(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    selection: str,
+) -> None:
+    caller, repo = make_temps(tmp_path_factory, 2)
+    config_user("review", "review@example.com")
+    make_repo(repo, [["git", "init", "-b", "main"]])
+    commit_file(repo, "foo.txt", "base", "Base")
+    git(repo, "switch", "-c", "topic")
+    commit_file(repo, "foo.txt", "topic", "Topic")
+    git(repo, "switch", "main")
+    write(repo / "foo.txt", "unsaved")()
+    if selection == "relative":
+        prefix = ["-C", str(repo.parent), "-C", repo.name]
+    elif selection == "paths":
+        prefix = ["--git-dir", str(repo / ".git"), "--work-tree", str(repo)]
+    else:
+        monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(repo))
+        prefix = []
+    result = explain(caller, *prefix, "switch", "topic")
+    assert result.returncode != 0
+    block = blocks(result.stdout)["stash-local-changes"]
+    assert "Run the suggested commands from" in block
+    assert str(repo).replace("\\", "/") in block.replace("\\", "/")
+    assert (repo / "foo.txt").read_text(encoding="utf-8") == "unsaved"
+    assert not (caller / ".git").exists()
+
+
+def test_redirected_counter_uses_target(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    _, local, caller = diverged_clones(tmp_path_factory)
+    for index in range(5):
+        result = explain(caller, "-C", str(local), "push")
+        assert result.returncode != 0
+        assert (REBASE_HINT in output_ids(result.stdout)) == (index == 4)
+    assert (local / ".git/git-hints/integration-failures.json").exists()
+    assert not (caller / ".git/git-hints/integration-failures.json").exists()
+
+
+@pytest.mark.parametrize(
+    "failure", ["other-source", "other-destination", "pull"]
+)
+def test_counter_excludes_unrelated_integration(
+    tmp_path_factory: pytest.TempPathFactory, failure: str
+) -> None:
+    _, local, other = diverged_clones(tmp_path_factory)
+    git(other, "push", "origin", "HEAD:other")
+    rejected_pushes(local, 4)
+    if failure == "other-source":
+        git(local, "branch", "side")
+        command = ["push", "origin", "side:main"]
+    elif failure == "other-destination":
+        command = ["push", "origin", "HEAD:other"]
+    else:
+        command = ["pull", "--ff-only", "origin", "other"]
+    result = explain(local, *command)
+    assert result.returncode != 0
+    assert REBASE_HINT not in output_ids(result.stdout)
+    counts = json.loads(
+        (local / ".git/git-hints/integration-failures.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert counts["refs/heads/main"]["count"] == 4
+    assert REBASE_HINT in output_ids(explain(local, "push").stdout)
+
+
+def test_first_divergent_pull_has_immediate_hint(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    _, local, _ = diverged_clones(tmp_path_factory)
+    result = explain(local, "pull", "--ff-only")
+    assert result.returncode != 0
+    block = blocks(result.stdout)["diverged"]
+    assert "Priority: error/blocked" in block
+    assert "git pull --no-rebase" in block
+    assert "Caution: git pull --rebase" in block
+    assert REBASE_HINT not in output_ids(result.stdout)
+
+
+@pytest.mark.parametrize("option", [["--repo", "mirror"], ["--repo=mirror"]])
+def test_named_push_repository_is_resolved(
+    tmp_path_factory: pytest.TempPathFactory, option: list[str]
+) -> None:
+    remote, local, _ = diverged_clones(tmp_path_factory)
+    git(local, "remote", "add", "mirror", str(remote))
+    result = explain(local, "push", *option)
+    assert result.returncode != 0
+    assert "git fetch mirror" in result.stdout
+    assert not (local / ".git/git-hints/integration-failures.json").exists()
+
+
+def test_command_configuration_is_used_for_inspection(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    remote, local, _ = diverged_clones(tmp_path_factory)
+    git(local, "remote", "add", "mirror", str(remote))
+    git(local, "fetch", "mirror")
+    rejected_pushes(local, 4)
+    result = explain(local, "-c", "branch.main.remote=mirror", "push")
+    assert REBASE_HINT in output_ids(result.stdout)
+    assert "git fetch mirror" in result.stdout
+    assert "branch.main.remote=mirror" in result.stdout
+    # Inspection and suggestions must not persist command-scoped settings.
+    assert git(local, "config", "branch.main.remote").stdout.strip() == "origin"
+
+
+def test_push_advice_respects_negative_fetch_refspec(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    _, local, _ = diverged_clones(tmp_path_factory)
+    git(local, "config", "--add", "remote.origin.fetch", "^refs/heads/main")
+    result = explain(local, "push")
+    block = blocks(result.stdout)["push-rejected-non-fast-forward"]
+    assert "git merge origin/main" not in block
+    assert "Replace the placeholders" in block
+
+
+def test_unresolvable_target_preserves_git_failure(tmp_path: Path) -> None:
+    args = ["-C", str(tmp_path / "missing"), "status"]
+    expected = git(tmp_path, *args, check=False)
+    result = explain(tmp_path, *args)
+    assert result.returncode == expected.returncode
+    assert result.stderr == expected.stderr
+    assert output_ids(result.stdout) == []
+
+
+def test_counter_write_failure_is_reported_without_losing_hint(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    _, local, _ = diverged_clones(tmp_path_factory)
+    # A file where the state directory should be prevents a counter write.
+    (local / ".git/git-hints").write_text("blocked", encoding="utf-8")
+    result = explain(local, "push")
+    assert result.returncode == 1
+    assert "git-hints:" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "push-rejected-non-fast-forward" in output_ids(result.stdout)

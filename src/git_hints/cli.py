@@ -73,7 +73,11 @@ def git_hints(
 
 # Accept Git's options as plain arguments, so Git receives every flag intact.
 @app.command(
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        "allow_interspersed_args": False,
+    }
 )
 def explain(
     ctx: typer.Context,
@@ -84,6 +88,7 @@ def explain(
             "it so that its options aren't read as options of git-hints."
         ),
     ] = None,
+    fetch: Annotated[bool, typer.Option("--fetch", hidden=True)] = False,
 ) -> None:
     """Run a Git command, then explain why it failed.
 
@@ -94,7 +99,7 @@ def explain(
     """
     options: GlobalOptions = ctx.obj
     argv = [*(command or []), *ctx.args]
-    if options.fetch:
+    if options.fetch or fetch:
         typer.echo("git-hints: --fetch cannot be used with explain.", err=True)
         raise typer.Exit(USAGE_ERROR)
     if not argv or argv[0] != "git":

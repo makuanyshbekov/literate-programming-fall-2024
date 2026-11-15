@@ -421,15 +421,29 @@ def diverged(ctx: Context) -> Hint | None:
     # `git pull` refuses to start while another operation is paused.
     if repo.operations.combining or repo.unmerged_paths:
         return None
+    hint = divergence_advice()
+    return Hint(
+        id=hint.id,
+        priority=hint.priority,
+        text=(
+            f"Your branch has {plural(status.ahead, 'commit')} its upstream "
+            f"{code(status.upstream or '')} lacks, and the upstream has "
+            f"{plural(status.behind, 'commit')} your branch lacks. " + hint.text
+        ),
+        stage=hint.stage,
+        commands=hint.commands,
+        as_of_last_fetch=not ctx.fetched,
+    )
+
+
+# Shared advice: reactive recognition need not depend on cached counts.
+def divergence_advice() -> Hint:
     return Hint(
         id="diverged",
         priority=Priority.WORKFLOW,
         text=(
-            "Your branch has diverged from its upstream "
-            f"{code(status.upstream or '')}: it has "
-            f"{plural(status.ahead, 'commit')} the upstream lacks, and the "
-            f"upstream has {plural(status.behind, 'commit')} your branch "
-            "lacks. Do you want to integrate the remote commits with "
+            "The branch histories have diverged. "
+            "Do you want to integrate the remote commits with "
             "[git pull](https://git-scm.com/docs/git-pull "
             '"Fetches and integrates remote commits; --rebase replays yours on '
             'top of them.") and then share yours with '
@@ -458,7 +472,6 @@ def diverged(ctx: Context) -> Hint | None:
                 Safety.CAUTION,
             ),
         ),
-        as_of_last_fetch=not ctx.fetched,
     )
 
 
