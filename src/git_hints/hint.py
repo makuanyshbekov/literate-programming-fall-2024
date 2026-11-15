@@ -258,8 +258,9 @@ def shell_quote(word: str) -> str:
     return shlex.quote(word)
 
 
-# Build a Git command line naming paths. Add `--` when a path could be
-# mistaken for an option.
+# Build a Git command line naming concrete paths, not Git patterns. Preserve
+# the familiar output for ordinary names; disable Git's own pattern matching
+# when a name contains pathspec syntax. Shell quoting alone cannot do that.
 def git_with_paths(
     # The Git arguments preceding the paths, such as `["add"]`.
     args: Sequence[str],
@@ -267,7 +268,10 @@ def git_with_paths(
     # True to always separate the paths with `--`.
     separator: bool = False,
 ) -> str:
-    words = ["git", *args]
+    words = ["git"]
+    if any(any(char in path for char in "*?[:\\") for path in paths):
+        words.append("--literal-pathspecs")
+    words += args
     if separator or any(path.startswith("-") for path in paths):
         words.append("--")
     words += [shell_quote(path) for path in paths]

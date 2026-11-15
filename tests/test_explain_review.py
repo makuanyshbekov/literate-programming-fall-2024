@@ -1,5 +1,6 @@
 # Regression coverage from the final review of `git-hints explain`.
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,8 @@ from git_test_tools import (
     write,
 )
 from test_explain import REBASE_HINT, diverged_clones, explain, rejected_pushes
+
+from git_hints.hint import git_with_paths
 
 
 @pytest.mark.parametrize("separator", [[], ["--"]])
@@ -183,3 +186,46 @@ def test_counter_write_failure_is_reported_without_losing_hint(
     assert "git-hints:" in result.stderr
     assert "Traceback" not in result.stderr
     assert "push-rejected-non-fast-forward" in output_ids(result.stdout)
+
+
+# Round 2: suggested file operands must not expand as Git pathspec patterns.
+@pytest.mark.parametrize("operation", ["add", "remove"])
+def test_suggested_paths_are_literal(tmp_path: Path, operation: str) -> None:
+    make_repo(tmp_path, [["git", "init", "-b", "main"]])
+    names = {"[ab].txt", "a.txt", "b.txt"}
+    for name in names:
+        write(tmp_path / name, "example")()
+    args = ["add"]
+    if operation == "remove":
+        git(tmp_path, "add", ".")
+        args = ["rm", "--cached"]
+    command = git_with_paths(args, ["[ab].txt"], separator=True)
+    git(tmp_path, *shlex.split(command)[1:])
+    staged = set(
+        filter(None, git(tmp_path, "ls-files", "-z").stdout.split("\0"))
+    )
+    expected = {"[ab].txt"} if operation == "add" else {"a.txt", "b.txt"}
+    assert staged == expected
+    assert all((tmp_path / name).exists() for name in names)
+
+
+def test_rebase_hint_does_not_assume_local_only_commits(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    _, local, _ = diverged_clones(tmp_path_factory)
+    git(local, "switch", "-c", "behind", "origin/main")
+    git(local, "fetch", "origin")
+    assert git(
+        local, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"
+    ).stdout.split() == ["0", "1"]
+    for index in range(5):
+        result = explain(local, "push", "origin", "HEAD:main")
+        assert result.returncode != 0
+        assert (REBASE_HINT in output_ids(result.stdout)) == (index == 4)
+    block = blocks(result.stdout)[REBASE_HINT]
+    assert "If your branch contains local-only commits" in block
+    assert (
+        "Your local repository contains commits that have not been" not in block
+    )
+    assert "git rebase --abort" not in block
+    assert "git status" in block

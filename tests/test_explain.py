@@ -13,6 +13,7 @@ from git_test_tools import (
     append,
     blocks,
     collapse,
+    commands,
     commit_file,
     config_user,
     git,
@@ -493,6 +494,9 @@ def test_counter_operation_in_progress(
         assert result.returncode != 0
         assert "(non-fast-forward)" in result.stderr
         assert REBASE_HINT not in output_ids(result.stdout)
+        block = blocks(result.stdout)[PUSH_REJECTED]
+        assert commands(block) == ["git status"]
+        assert "Finish or cancel the active operation" in block
     finally:
         git(local, "merge", "--abort")
     assert git(local, "rev-parse", "HEAD").stdout == head

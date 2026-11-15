@@ -1669,8 +1669,9 @@ solely to check its hints.
   and split the output on NUL characters to obtain conflicted paths. Display
   this hint when paths are returned during plain `git-hints` inspection or after
   a failed command executed through `git-hints explain`. Include those paths in
-  the hint. Suppress it when no unmerged paths remain. A failed inspection
-  command is an error, not evidence of conflicts.
+  the hint, showing up to five paths in Git's order followed by `and N more`
+  when additional paths remain. Suppress it when no unmerged paths remain. A
+  failed inspection command is an error, not evidence of conflicts.
 
   During plain `git-hints` inspection, when `operation-in-progress` also
   applies, show both hints: `merge-conflicts` covers resolving and staging
@@ -1809,6 +1810,11 @@ solely to check its hints.
   original push. Expected result: the local branch incorporates the rejected
   destination's history and the push can succeed if no other errors remain.
 
+  If unmerged entries or an unfinished merge, rebase, cherry-pick, revert, or
+  `git am` are present, keep the rejection explanation and `git status` command,
+  but defer fetch/merge integration advice until that operation is finished or
+  cancelled. Reuse the shared operation checks and existing operation guidance.
+
   Identify the destination branch from the rejection. Resolve the remote from
   the push command's explicit repository argument or Git's configured push
   destination, including `branch.<name>.pushRemote` and `remote.pushDefault`
@@ -1939,23 +1945,25 @@ solely to check its hints.
 
 ### Suggest `git pull --rebase`?
 
-* Hint: After five qualifying failures to integrate with the upstream branch,
-  replaying your local commits using
+* Hint: There have been five qualifying failures to integrate with the upstream
+  branch. If your branch contains local-only commits, replaying them using
   [git pull --rebase](https://git-scm.com/docs/git-pull "Fetch upstream changes and replay local commits on top of them")
   may resolve the problem. Rebasing changes local commit IDs and may cause
   conflicts. Make sure your local work is committed or otherwise backed up
   before attempting it.
 
-* Git stage: Your local repository contains commits that have not been
-  incorporated into the upstream branch, while the upstream contains commits
-  missing from your local branch.
+* Git stage: Your current branch in the local repository could not integrate
+  with its upstream; compare their histories before choosing an integration
+  method. A rejected push alone does not prove two-sided divergence.
 
 * Command: Caution: `git pull --rebase`. This fetches upstream changes and
-  replays local commits on top of them. If conflicts occur, resolve them and use
-  `git rebase --continue`, or cancel with `git rebase --abort`. See the
+  replays any local-only commits on top of them. If Git stops on conflicts, run
+  `git status` and follow the shared operation guidance for continuation or
+  cancellation, including its abort warning. Do not duplicate abort commands in
+  this `caution` hint. See the
   [git rebase documentation](https://git-scm.com/docs/git-rebase "Replay commits on another base and resolve rebase conflicts").
   Expected result: The local branch contains the upstream commits followed by
-  the replayed local commits and can be pushed if no other errors remain.
+  any replayed local commits and can be pushed if no other errors remain.
 
   When this hint and a reactive push-failure or divergence hint trigger
   together, display the immediate failure hint first, followed by this rebase
@@ -2170,7 +2178,11 @@ For inspection, use a consistent repository-root path base, including when
 invoked from a subdirectory. Convert displayed file operands to paths usable
 from the suggested command's working directory. Reuse the repository path
 helper and path-command builder; for commands such as `git add` and `git rm`,
-place `--` before substituted file operands as well as quoting them. Display
+place `--` before substituted file operands as well as quoting them. Concrete
+filenames must match literally, not as Git pathspec patterns: use
+`--literal-pathspecs` when pathspec syntax is present. Preserve the user's
+explained command unchanged. Suggested literal-path commands must still retain
+the original repository context. Display
 commands for PowerShell on Windows and a POSIX shell elsewhere; do not promise
 that one quoting convention works in every shell.
 

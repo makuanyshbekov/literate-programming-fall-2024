@@ -397,6 +397,12 @@ def push_rejected_non_fast_forward(failure: Failure) -> Hint | None:
                 "before integrating its remote history."
             )
         commands = [status]
+    elif repo.unmerged_paths or repo.operations.combining:
+        text += (
+            " Finish or cancel the active operation before starting another "
+            "integration; follow git status for operation-specific guidance."
+        )
+        commands = [status]
     else:
         remote = push_remote(repo, failure.command, branch)
         tracking = tracking_branch(repo, remote, current["destination"])
@@ -622,8 +628,9 @@ def rebase_after_repeated_integration_failures() -> Hint:
         id="rebase-after-repeated-integration-failures",
         priority=Priority.ERROR_BLOCKED,
         text=(
-            "After five qualifying failures to integrate with the upstream "
-            "branch, replaying your local commits using "
+            "There have been five qualifying failures to integrate with the "
+            "upstream branch. If your branch contains local-only commits, "
+            "replaying them using "
             "[git pull --rebase](https://git-scm.com/docs/git-pull "
             '"Fetch upstream changes and replay local commits on top of '
             'them") may resolve the problem. Rebasing changes local commit '
@@ -633,17 +640,18 @@ def rebase_after_repeated_integration_failures() -> Hint:
             '"Replay commits on another base and resolve rebase conflicts").'
         ),
         stage=(
-            "Your local repository contains commits that have not been "
-            "incorporated into the upstream branch, while the upstream "
-            "contains commits missing from your local branch."
+            "Your current branch in the local repository could not integrate "
+            "with its upstream; compare their histories before choosing an "
+            "integration method."
         ),
         commands=(
             Command(
                 "`git pull --rebase`",
                 "The local branch contains the upstream commits followed by "
-                "the replayed local commits and can be pushed if no other "
-                "errors remain. If conflicts occur, resolve them and run "
-                "`git rebase --continue`, or cancel with `git rebase --abort`.",
+                "any replayed local commits and can be pushed if no other "
+                "errors remain. If Git stops on conflicts, run `git status` "
+                "and follow the operation-specific continuation or "
+                "cancellation guidance.",
                 Safety.CAUTION,
             ),
         ),
@@ -758,8 +766,9 @@ def suggestion_context(repo: Repo, command: GitCommand) -> str:
     if command.prefix:
         prefix = " ".join(shell_quote(w) for w in ("git", *command.prefix))
         note += (
-            f" For commands shown without global options, use {code(prefix)} "
-            "in place of `git`."
+            " When a suggested command omits the original global options, "
+            f"insert those from {code(prefix)} immediately after `git`, "
+            "before any displayed options."
         )
     return note
 

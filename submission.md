@@ -96,37 +96,58 @@ Final submission
 
 #### Specification review rounds
 
-One final specification-review round has been completed; the draft review
-rounds are recorded separately above. Comparing the attached review, examining
-additional gaps, prioritizing fixes, and planning implementation were steps in
-this round, not separate rounds. The count includes 27 findings from the attached
-review and 6 additional findings; it does not mean every finding was accepted
-or fixed. Accepted high- and medium-severity corrections were applied to the
-specification; application code was not changed during that specification-review
-round.
+Two final specification-review rounds have been completed; the draft review
+rounds are recorded separately above. Discussion and internal verification
+passes are grouped within each round. Round 1's count includes 27 findings from
+the attached review and 6 additional findings, not all accepted or fixed.
+Round 2 addresses four new findings and one carried-over, low-severity alignment
+issue; its implementation changes are recorded separately below.
 
 | Round | Findings | Main changes made |
 | --- | --- | --- |
 | 1 | 33 identified (27 attached + 6 additional) | Clarified argument forwarding, repository and path context, failure-counter eligibility, reactive guidance, and output behavior while adding minimal implementation guidance. |
+| 2 | 5 addressed (1 high, 3 medium, 1 low) | Required literal filename matching, operation-compatible push advice, conditional rebase wording, shared abort-safety guidance, and the existing five-file conflict display limit. |
 
 #### Last specification review
 
-(LLM and prompt used)
+LLM: Codex (GPT-6 family); the exact model variant and effort setting were not
+exposed in the session metadata and should be copied from the UI for submission.
 
-(LLM output, possibly with strikethrough)
+User prompt for round 2:
+
+> Can you review the spec in git-hints explain again, compare with this review
+> #attachment:Pasted text #1 again and discover new findings to suggest new
+> implementations but do not make significant changes, since these produce an
+> overspecified result and limit understanding of the problem.
+
+Review output, subsequently prioritized and applied:
+
+* High: shell quoting and `--` do not prevent Git pathspec expansion, so a
+  suggested command for `[ab].txt` can also select `a.txt` and `b.txt`.
+* Medium: push-rejection advice must defer integration during an unfinished
+  operation while preserving the rejection explanation and status command.
+* Medium: repeated rejected pushes do not prove that local-only commits exist;
+  the rebase suggestion and stage explanation must use conditional wording.
+* Medium: duplicated rebase-abort advice conflicts with the hint's `caution`
+  classification; use the shared operation guidance with its abort warning.
+* Low, carried over: document the five-file conflict display limit already used
+  by the implementation rather than introduce new behavior.
+
+These corrections were applied without adding new commands or a new rule system.
 
 #### Implementation review rounds
 
-One implementation-review round covers `git-hints explain` and the shared
-helpers and tests needed by that section. Its internal review, fix, and
-verification passes are combined below; earlier implementation planning is
-excluded. The 9 findings comprise 6 initial findings and 3 follow-up findings,
-grouping related symptoms and excluding routine formatting. Final verification
-found no further substantive issues within this scope.
+Two implementation-review rounds cover `git-hints explain` and the shared
+helpers and tests needed by that section. Internal review, fix, and verification
+passes are combined within each round; earlier implementation planning and
+routine formatting are excluded. Round 2's four code findings correspond to the
+high- and medium-severity specification findings; the low-severity display-limit
+alignment required only a specification edit.
 
 | Round | Findings | Main changes made |
 | --- | --- | --- |
 | 1 | 9 | Fixed argument forwarding, repository and command context, failure-counter eligibility, divergence guidance, push destination and fetch-refspec handling, unresolved-target exit behavior, and source-based regression testing, with all 76 tests passing. |
+| 2 | 4 (1 high, 3 medium) | Made generated filename operands literal, deferred push integration during active operations, made rebase advice conditional, and reused shared abort guidance while adding focused regressions. |
 
 #### Last implementation review
 
@@ -135,7 +156,7 @@ exposed in the session metadata and should be copied from the UI for submission.
 
 User request initiating implementation review:
 
-> Is the implementation review was provided? If not initiate it and provide implementations
+> Let's start implementing to solve the problems, and applying the changes to the tables as the second round
 
 Final review criteria applied in this session:
 
@@ -149,15 +170,17 @@ Final review criteria applied in this session:
 
 Last review output:
 
-No high- or medium-severity findings remain within the reviewed `git-hints
-explain` implementation scope. Argument forwarding, redirected repository
-inspection, command context, upstream-specific failure counting, immediate
-divergence guidance, and push destination resolution have regression coverage.
-Unknown global-option effects conservatively disable repository-dependent
-checks, as permitted by the specification. This does not certify unrelated
-proactive hints or complete the separate specification-review requirement.
+The four round-2 implementation findings are addressed. Generated staging and
+removal commands disable Git pattern expansion when concrete filenames contain
+pathspec syntax, and their repository-context instructions retain original
+options before generated options. Push-rejection hints defer integration while
+an operation is unfinished. Repeated-failure advice no longer asserts local-only
+commits and refers to shared operation guidance instead of duplicating abort
+commands. Focused regressions reproduced the failures before the fixes and
+passed afterward. No further substantive issues were found in the round-2
+changes; this does not certify unrelated proactive hints.
 
 Validation used the configured Python 3.11.2 environment and Git repositories
 isolated by the test fixtures. Ruff lint and format checks passed for `src` and
-`tests`; `ty check src tests` passed. The full suite passed: 76 tests.
+`tests`; `ty check src tests` passed. The full suite passed: 79 tests.
 
