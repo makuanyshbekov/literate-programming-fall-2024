@@ -163,8 +163,7 @@ wording/link findings, including two carried-over documentation issues.
 
 #### Last specification review
 
-LLM: Codex (GPT-6 family); the exact model variant and effort setting were not
-exposed in the session metadata and should be copied from the UI for submission.
+LLM: Codex (GPT-6 family). Prompting GPT-6.1 Sol, medium-high effort with the following review
 
 User prompt for round 5:
 
@@ -211,8 +210,7 @@ and ID wording corrections need no CLI behavior change.
 
 #### Last implementation review
 
-LLM: Codex (GPT-6 family); the exact model variant and effort setting were not
-exposed in the session metadata and should be copied from the UI for submission.
+LLM: Codex (GPT-6 family). Prompting GPT-6.1 Sol, medium-high effort with the following review
 
 User request initiating implementation review:
 
