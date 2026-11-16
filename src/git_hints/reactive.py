@@ -761,14 +761,32 @@ def suggestion_context(repo: Repo, command: GitCommand) -> str:
     note = (
         f" These suggestions target {code(target)}. "
         f"Run the suggested commands from {code(directory)}, retaining the "
-        "original Git environment."
+        "original repository-selection environment."
     )
-    if command.prefix:
-        prefix = " ".join(shell_quote(w) for w in ("git", *command.prefix))
+    matching_flags = {
+        "--literal-pathspecs",
+        "--glob-pathspecs",
+        "--noglob-pathspecs",
+        "--icase-pathspecs",
+    }
+    suggested_options = []
+    options = iter(command.prefix or ())
+    for option in options:
+        if option not in matching_flags:
+            suggested_options.append(option)
+        if option in GLOBAL_OPTIONS_WITH_VALUE:
+            # Preserve values even when their text resembles a matching flag.
+            suggested_options.append(next(options))
+    if suggested_options:
+        prefix = " ".join(shell_quote(w) for w in ("git", *suggested_options))
         note += (
-            " When a suggested command omits the original global options, "
+            " When a suggested command omits repository/configuration options, "
             f"insert those from {code(prefix)} immediately after `git`, "
             "before any displayed options."
+        )
+    if tuple(suggested_options) != command.prefix and command.prefix:
+        note += (
+            " Original filename-matching options are omitted from suggestions."
         )
     return note
 

@@ -560,6 +560,8 @@ def test_operation_in_progress(
 def test_commit_identity(tmp_path_factory: pytest.TempPathFactory) -> None:
     (repo,) = make_temps(tmp_path_factory, 1)
     make_repo(repo, [["git", "init", "-b", "main"]])
+    # Require explicit configuration instead of host-dependent auto-detection.
+    git(repo, "config", "user.useConfigOnly", "true")
     _, found = all_blocks(repo)
     block = found["commit-identity"]
     assert 'git config --global user.name "Your Name"' in block
@@ -576,10 +578,12 @@ def test_commit_identity(tmp_path_factory: pytest.TempPathFactory) -> None:
     git(repo, "config", "--global", "user.email", "user1@example.com")
     assert "commit-identity" not in hint_ids(repo)
 
-    # An empty local value overrides the global one and is fixed locally.
+    # Git accepts an explicitly empty email; configuration alone is not proof
+    # of a blocker. An empty local name does prevent identity resolution.
     git(repo, "config", "--local", "user.email", "")
+    assert "commit-identity" not in hint_ids(repo)
+    git(repo, "config", "--local", "user.name", "")
     _, found = all_blocks(repo)
     assert (
-        'git config --local user.email "you@example.com"'
-        in found["commit-identity"]
+        'git config --local user.name "Your Name"' in found["commit-identity"]
     )

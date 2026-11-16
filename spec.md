@@ -658,7 +658,12 @@ The Conditions of the hints below assume this check and do not repeat it.
   match any`. Check for an upstream using `git rev-parse --abbrev-ref
   --symbolic-full-name "@{upstream}"`. Confirm that the `origin` remote exists
   using `git remote`. Suggest configuring an upstream only when the current
-  branch has no resolvable upstream and `origin` exists. Do not display the hint
+  branch has no upstream configuration and `origin` exists. If
+  `branch.<name>.remote` or `branch.<name>.merge` is already set but the tracking
+  ref cannot resolve, use an unavailable-upstream variant of this hint: name
+  the configured destination, suggest `git status`, and ask the user to verify
+  it. Do not suggest replacing that configuration with `origin`. Do not display
+  the hint
   in detached HEAD state, on a branch with no commits, or when a valid upstream
   is configured.
 
@@ -737,10 +742,10 @@ The Conditions of the hints below assume this check and do not repeat it.
 
 * Hint: Do you want to configure your
   [commit identity](https://git-scm.com/docs/git-config#Documentation/git-config.txt-username "The name and email address Git records as the author of each commit")?
-  Git needs both a user name and an email address to create commits.
+  Git could not resolve a usable author or committer identity for a commit.
 
-* Git stage: Your identity is stored in Git's configuration and is recorded in
-  every commit you create in the local repository.
+* Git stage: Git cannot resolve a usable author or committer identity to record
+  in a commit in the local repository.
 
 * Command: Set each missing value using `git config --global user.name "Your
   Name"` or `git config --global user.email "you@example.com"`. Expected result:
@@ -755,15 +760,21 @@ The Conditions of the hints below assume this check and do not repeat it.
 
 * ID: `commit-identity`, priority class: error/blocked, safety: safe.
 
-* Conditions: Check the effective Git configuration by running `git config --get
-  user.name` and `git config --get user.email`. An exit code of 1 or an empty
-  returned value means that setting is missing; other nonzero exit codes are
-  inspection errors and must not trigger this hint. Trigger the hint when either
-  setting is missing or empty.
+* Conditions: Check effective identities using `git var GIT_AUTHOR_IDENT` and
+  `git var GIT_COMMITTER_IDENT`; environment-supplied identities and Git's normal
+  resolution rules apply. Suppress the hint when both succeed. Missing-value
+  results or recognized identity failures trigger `error/blocked`; unrelated
+  failures are inspection errors. Use `git config --get user.name` and
+  `git config --get user.email` to suggest missing configuration corrections,
+  preserving the local/global distinction above. Invalid environment overrides
+  must be corrected first; valid configuration must not be presented as their
+  remedy. An empty setting alone does not prove that Git cannot commit.
 
-* Test case: Unset each identity setting in turn and verify the hint appears
-  with `error/blocked` priority. Also test an empty local override of a valid
-  global value; the suggested correction must use `--local`.
+* Test case: With `user.useConfigOnly=true`, unset each identity setting in turn
+  and verify a real resolution failure produces `error/blocked`. Test an empty
+  local name overriding a valid global name; its correction must use `--local`.
+  Valid environment-supplied author and committer identities must suppress the
+  blocker even when configuration values are empty.
 
 ### Stage or ignore untracked files
 
@@ -2180,9 +2191,13 @@ from the suggested command's working directory. Reuse the repository path
 helper and path-command builder; for commands such as `git add` and `git rm`,
 place `--` before substituted file operands as well as quoting them. Concrete
 filenames must match literally, not as Git pathspec patterns: use
-`--literal-pathspecs` when pathspec syntax is present. Preserve the user's
-explained command unchanged. Suggested literal-path commands must still retain
-the original repository context. Display
+`--literal-pathspecs` when pathspec syntax is present. Preserve repository and
+configuration options in generated suggestions, but omit original matching
+flags that would conflict with literal matching. If inherited pathspec
+environment settings conflict, provide manual instructions to clear them
+temporarily and restore them afterward. Preserve the user's explained command
+unchanged. Suggested literal-path commands must still retain the original
+repository context. Display
 commands for PowerShell on Windows and a POSIX shell elsewhere; do not promise
 that one quoting convention works in every shell.
 
