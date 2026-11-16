@@ -98,11 +98,11 @@ GitHub userid: `makuanyshbekov`
 #### Contributions
 
 Reviewed and refined the `git-hints explain` specification and implemented the
-agreed fixes and regression tests across four final review rounds.
+agreed fixes and regression tests across five final review rounds.
 
 #### Specification review rounds
 
-Four final specification-review rounds have been completed; the draft review
+Five final specification-review rounds have been completed; the draft review
 rounds are recorded separately above. Discussion and internal verification
 passes are grouped within each round. Round 1's count includes 27 findings from
 the attached review and 6 additional findings, not all accepted or fixed.
@@ -111,7 +111,9 @@ issue. Round 3 addresses three medium-severity findings concerning pathspec
 compatibility, effective identity resolution, and unavailable upstream refs;
 implementation changes are recorded separately below. Round 4 addresses three
 medium findings about explicit pull destinations, upstream-change resets, and
-filename fidelity, plus one low-severity test-output clarification.
+filename fidelity, plus one low-severity test-output clarification. Round 5 is
+limited to `git-hints explain`: one medium signal-status finding and three low
+wording/link findings, including two carried-over documentation issues.
 
 | Round | Findings | Main changes made |
 | --- | --- | --- |
@@ -119,42 +121,47 @@ filename fidelity, plus one low-severity test-output clarification.
 | 2 | 5 addressed (1 high, 3 medium, 1 low) | Required literal filename matching, operation-compatible push advice, conditional rebase wording, shared abort-safety guidance, and the existing five-file conflict display limit. |
 | 3 | 3 (medium) | Distinguished repository context from matching options, based identity blockers on Git's effective identities, and preserved configured destinations when upstream refs are unavailable. |
 | 4 | 4 (3 medium, 1 low) | Preserved explicit pull destinations, reset counts when upstream configuration changes, required reliable filename operands with manual fallback, and clarified ID assertions for each output mode. |
+| 5 | 4 (1 medium, 3 low; 2 low carried over) | Defined signal-exit status, made the wrapper-help exception explicit, completed ID-assertion wording, and anchored the repeated-rebase documentation links. |
 
 #### Last specification review
 
 LLM: Codex (GPT-6 family); the exact model variant and effort setting were not
 exposed in the session metadata and should be copied from the UI for submission.
 
-User prompt for round 4:
+User prompt for round 5:
 
-> Review the spec in git-hints explain again to identify new high, medium and low
-> severity findings and try to compare it with this review #attachment:Pasted
-> text #1 and keep in mind previous context
+> Review the spec again, find out high, medium and low severity findings, suggest
+> the implementations related to theses findings and try to compare the spec
+> with provided text #attachment:Pasted text #1
 
-Review output (summary; corrections applied in round 4):
+Review output (summary; corrections applied in round 5):
 
-* Medium: reactive divergence advice must preserve a known explicit pull
-  destination instead of reverting to the configured upstream.
-* Medium: changing the configured upstream without changing `HEAD` must reset
-  the integration-failure count.
-* Medium: replacement decoding and Git-quoted diagnostic paths can change a
-  filename; require NUL-delimited concrete path lists and manual guidance when
-  an exact filename cannot be established.
-* Low: normal output uses `ID: <id>` lines, whereas `--ids-only` uses bare IDs;
-  the test instructions must distinguish them.
+* Medium: the exit-code contract does not distinguish POSIX signal termination
+  from ordinary exits; map a completed child's `-N` result to the Bash-compatible
+  status `128 + N`.
+* Low: explicitly allow `git-hints explain --help` before the Git command while
+  continuing to forward Git's own `--help` unchanged.
+* Low, carried over: the shared reactive-test introduction still needs to
+  distinguish normal `ID: <id>` lines from bare IDs under `--ids-only`.
+* Low, carried over from the attached review: the repeated-rebase hint's two
+  page-level documentation links need passage anchors.
 
-No new high-severity issue was found. Previously addressed findings were not
-counted again. These corrections use the existing helpers and output modes.
+No new high-severity issue was found. Round 4's implementation fixes remain
+addressed; the ID wording and link findings are explicitly recorded as
+carryovers. Scope is only `git-hints explain` and shared requirements that
+directly govern its behavior.
 
 #### Implementation review rounds
 
-Four implementation-review rounds are recorded below. Rounds 1 and 2 cover
+Five implementation-review rounds are recorded below. Rounds 1 and 2 cover
 `git-hints explain` and its shared helpers; round 3 also covers the identity and
 upstream hints explicitly approved for correction. Internal review, fix, and
 verification passes are combined within each round; earlier planning and routine
 formatting are excluded. Round 2's low-severity display-limit alignment and
 round 4's low-severity ID-assertion clarification required specification edits
-only. Round 4's implementation covers the three agreed medium findings.
+only. Round 4's implementation covers the three agreed medium findings. Round 5
+adds signal-status handling and aligns two reactive documentation links; its help
+and ID wording corrections need no CLI behavior change.
 
 | Round | Findings | Main changes made |
 | --- | --- | --- |
@@ -162,6 +169,7 @@ only. Round 4's implementation covers the three agreed medium findings.
 | 2 | 4 (1 high, 3 medium) | Made generated filename operands literal, deferred push integration during active operations, made rebase advice conditional, and reused shared abort guidance while adding focused regressions. |
 | 3 | 3 (medium) | Removed conflicting matching flags from suggested context, added manual environment guidance, checked effective author and committer identities, and preserved unavailable upstream destinations with focused regressions. |
 | 4 | 3 (medium) | Retained simple explicit pull destinations, stored upstream configuration with failure counts, and replaced unreliable filename operands with manual guidance while extending the existing regression tests. |
+| 5 | 2 (1 medium, 1 low carried over) | Converted negative signal return codes to shell status, aligned the two reactive documentation links with the spec, and added a focused regression for both output modes. |
 
 #### Last implementation review
 
@@ -170,36 +178,38 @@ exposed in the session metadata and should be copied from the UI for submission.
 
 User request initiating implementation review:
 
-> As we have found new findings, let's address the problems and start
-> implementing solutions but do not make significant changes, since these
-> produce an overspecified result and limit your understanding of the problem.
+> So as we have found new findings, let's start working on implementation for
+> medium and low severity ones with carried over issues but do not make
+> significant changes, since these produce an overspecified result and limit
+> your understanding of the problem.
 
 Final review criteria applied in this session:
 
-> Review the round-4 fixes for explicit pull destinations, upstream-change
-> counter resets, and unreliable filename operands. Check that unknown
-> destinations still use placeholders and earlier behavior remains covered.
-> Keep changes within the existing helpers and preserve the other contributor's
-> submission section and tests. Report substantive remaining findings.
+> Review only the round-5 changes affecting git-hints explain: signal-exit
+> status, wrapper-help wording, whole-line ID assertions, and repeated-rebase
+> documentation anchors. Verify both output modes and retain existing help and
+> forwarding behavior. Preserve the other contributor's submission section and
+> tests. Report substantive remaining findings without unrelated redesign.
 
 Last review output:
 
-The three round-4 implementation findings are addressed. Explicit pull
-destinations previously received safe placeholders; simple known destinations
-are now retained, without adding an unrelated default push. Counters reset when
-the configured upstream remote or merge refs change, including command-scoped
-configuration; older records without that metadata restart at zero. Unreliable
-diagnostic paths are omitted, and potentially altered concrete filenames receive
-manual status guidance. No substantive issue remains within the reviewed scope.
-The other contributor's submission section and test file were left unchanged.
+The round-5 changes are addressed. A completed child's negative signal return
+code is normalized before reporting and returning the status; ordinary exit
+codes retain the existing path. Normal output reports 143 for a simulated -15
+result, and ids-only output stays empty when no hint triggers. The two reactive
+documentation links now match the anchored specification links. Existing help
+behavior already met the clarified requirement. No substantive issue remains
+within this limited review scope. The other contributor's submission section
+and test file were left unchanged.
 
 Validation used the configured Python 3.11.2 environment and Git repositories
 isolated by the test fixtures. Ruff lint and format checks passed for the changed
 Python files, and `ty check src tests` passed. An existing E501 line-length
 diagnostic in the other contributor's test file was left unchanged; the remaining
-source and tests passed lint. Seven focused regression cases failed before the
-fixes; all 28 tests in the existing explain-review test file pass afterward.
-The full suite passed: 97 tests.
+source and tests passed lint. Both signal-output cases failed before the fix;
+all five focused signal/help cases pass afterward. Signal termination was
+simulated at the subprocess boundary because this validation ran on Windows;
+no live POSIX signal-termination test was run. The full suite passed: 99 tests.
 
 ### Gazizuly Yerassyl
 

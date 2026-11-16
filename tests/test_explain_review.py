@@ -1,7 +1,9 @@
 # Regression coverage from the final review of `git-hints explain`.
 import json
 import shlex
+import subprocess
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from git_test_tools import (
@@ -17,6 +19,7 @@ from git_test_tools import (
 )
 from test_explain import REBASE_HINT, diverged_clones, explain, rejected_pushes
 
+from git_hints import reactive
 from git_hints.git import Repo
 from git_hints.hint import git_with_paths, render_block
 from git_hints.proactive import Context, merge_conflicts
@@ -314,3 +317,27 @@ def test_unreliable_diagnostic_paths_are_not_used_as_operands(
         f"by merge:\n\t{path}\nPlease commit your changes or stash them."
     )
     assert overwritten_paths(diagnostic) == []
+
+
+# Round 5: a completed POSIX child can report a negative signal number.
+@pytest.mark.parametrize("ids_only", [False, True])
+def test_explain_returns_shell_status_for_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ids_only: bool,
+) -> None:
+    argv = ["git", "status"]
+    run = Mock(
+        return_value=subprocess.CompletedProcess(argv, -15, None, b"stopped\n")
+    )
+    monkeypatch.setattr(reactive.subprocess, "run", run)
+    monkeypatch.setattr(Repo, "work_tree", "not-a-repo")
+    assert reactive.explain(argv, ids_only=ids_only) == 143
+    output = capsys.readouterr()
+    assert output.err == "stopped\n"
+    if ids_only:
+        assert output.out == ""
+    else:
+        assert "Git exited with code 143." in output.out
+        assert "Git exited with code -15." not in output.out
+    run.assert_called_once()

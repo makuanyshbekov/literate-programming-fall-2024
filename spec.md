@@ -65,8 +65,10 @@ CLI commands
      explain -- git push`. Also recognize `--fetch` between `explain` and the
      separator or command, solely to reject it. A wrapper `--fetch` is invalid
      with `explain`: exit 2, write the usage error to stderr, write nothing to
-     stdout, and do not launch Git. Other global options after `explain` and
-     before the command are usage errors.
+     stdout, and do not launch Git. `git-hints explain --help` displays wrapper
+     help and exits 0 without launching Git. Other global options after
+     `explain` and before the command are usage errors; `--help` from the first
+     command argument `git` onward still belongs to Git.
 
    * Emit captured Git standard error to standard error. In normal output, print
      `Git exited with code <n>.` before any reactive hint blocks on standard
@@ -1657,9 +1659,9 @@ unrelated failure does not; include an explicit destination without an upstream.
 
 Diagnostic-based recognition supports English Git messages; display unrecognized
 diagnostics on stderr without guessing a matching hint. In the tests below,
-output-block checks refer to captured stdout, and an absent hint means no line
-equals `ID: <id>`. Inspect the captured output rather than rerunning a command
-solely to check its hints.
+output-block checks refer to captured stdout. An absent hint means no line equals
+`ID: <id>` in normal output, or `<id>` under `--ids-only`. Inspect the captured
+output rather than rerunning a command solely to check its hints.
 
 ### Resolve merge conflicts?
 
@@ -1961,7 +1963,7 @@ solely to check its hints.
 
 * Hint: There have been five qualifying failures to integrate with the upstream
   branch. If your branch contains local-only commits, replaying them using
-  [git pull --rebase](https://git-scm.com/docs/git-pull "Fetch upstream changes and replay local commits on top of them")
+  [git pull --rebase](https://git-scm.com/docs/git-pull#_description "Fetch upstream changes and replay local commits on top of them")
   may resolve the problem. Rebasing changes local commit IDs and may cause
   conflicts. Make sure your local work is committed or otherwise backed up
   before attempting it.
@@ -1975,7 +1977,7 @@ solely to check its hints.
   `git status` and follow the shared operation guidance for continuation or
   cancellation, including its abort warning. Do not duplicate abort commands in
   this `caution` hint. See the
-  [git rebase documentation](https://git-scm.com/docs/git-rebase "Replay commits on another base and resolve rebase conflicts").
+  [git rebase documentation](https://git-scm.com/docs/git-rebase#_description "Replay commits on another base and resolve rebase conflicts").
   Expected result: The local branch contains the upstream commits followed by
   any replayed local commits and can be pushed if no other errors remain.
 
@@ -2183,8 +2185,11 @@ codes, so no additional Git library is required.
   standard error and display it after completion (not live). In normal output,
   display the exit code; under `--ids-only`, omit the exit-code message. Return
   Git's exit code unless Git cannot be launched or an unexpected inspection
-  error occurs. Use the command, exit code, standard error, and inspected
-  repository state to select reactive hints. Do not disable Git's terminal
+  error occurs. For a completed POSIX child terminated by signal `N`, report
+  and return the Bash-compatible status `128 + N`, rather than subprocess's
+  negative return code. Ordinary exit codes are unchanged. Use the command,
+  exit code, standard error, and inspected repository state to select reactive
+  hints. Do not disable Git's terminal
   prompting or editor for `git-hints explain`; the `GIT_TERMINAL_PROMPT=0`
   requirement applies only to the tool's optional fetch and isolated test
   environment. Do not claim to recover the result of an earlier command run

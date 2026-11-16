@@ -661,12 +661,14 @@ def rebase_after_repeated_integration_failures() -> Hint:
             "There have been five qualifying failures to integrate with the "
             "upstream branch. If your branch contains local-only commits, "
             "replaying them using "
-            "[git pull --rebase](https://git-scm.com/docs/git-pull "
+            "[git pull --rebase]"
+            "(https://git-scm.com/docs/git-pull#_description "
             '"Fetch upstream changes and replay local commits on top of '
             'them") may resolve the problem. Rebasing changes local commit '
             "IDs and may cause conflicts. Make sure your local work is "
             "committed or otherwise backed up before attempting it. See the "
-            "[git rebase documentation](https://git-scm.com/docs/git-rebase "
+            "[git rebase documentation]"
+            "(https://git-scm.com/docs/git-rebase#_description "
             '"Replay commits on another base and resolve rebase conflicts").'
         ),
         stage=(
@@ -870,6 +872,9 @@ def explain(
     emit_stderr(completed.stderr)
     stderr = decode(completed.stderr)
     returncode = completed.returncode
+    # subprocess reports POSIX signal N as -N; use Bash's shell status 128+N.
+    if returncode < 0:
+        returncode = 128 - returncode
 
     errors: list[Exception] = []
     repo: Repo | None = None
