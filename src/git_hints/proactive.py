@@ -569,7 +569,35 @@ def no_upstream_branch(ctx: Context) -> Hint | None:
         "@{upstream}",
         ok=(0, 128),
     )
-    if upstream.returncode == 0 or "origin" not in repo.remotes:
+    if upstream.returncode == 0:
+        return None
+    remote = repo.config(f"branch.{branch}.remote")
+    merges = repo.config_all(f"branch.{branch}.merge")
+    if remote is not None or merges:
+        return Hint(
+            id="no-upstream-branch",
+            priority=Priority.WORKFLOW,
+            text=(
+                "The configured [upstream branch]"
+                "(https://git-scm.com/docs/git-branch "
+                '"A branch used for tracking and integration") is unavailable '
+                f"locally: remote {code(remote or '(not set)')}, branch "
+                f"{summarize(merges) if merges else '(not set)'}. "
+                "Verify the configured destination and its tracking ref before "
+                "changing the upstream; do not substitute another remote."
+            ),
+            stage=(
+                "Your local repository has upstream configuration, but its "
+                "tracking ref cannot currently be resolved."
+            ),
+            commands=(
+                Command(
+                    "`git status`",
+                    "Git shows the branch and any unavailable upstream.",
+                ),
+            ),
+        )
+    if "origin" not in repo.remotes:
         return None
     return Hint(
         id="no-upstream-branch",
@@ -1017,6 +1045,28 @@ def tracked_but_ignored(ctx: Context) -> Hint | None:
 # -------------
 def commit_identity(ctx: Context) -> Hint | None:
     repo = ctx.repo
+    identities = [
+        repo.run("var", variable)
+        for variable in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT")
+    ]
+    for identity in identities:
+        if identity.returncode == 0:
+            continue
+        known_failure = any(
+            fragment in identity.stderr.lower()
+            for fragment in (
+                "identity unknown",
+                "empty ident",
+                "unable to auto-detect",
+                "no name was given",
+                "no email was given",
+                "name consists only of disallowed characters",
+            )
+        )
+        if identity.returncode != 1 and not known_failure:
+            raise InspectionError(identity)
+    if all(identity.returncode == 0 for identity in identities):
+        return None
     commands = []
     for key, example in (
         ("user.name", "Your Name"),
@@ -1036,24 +1086,32 @@ def commit_identity(ctx: Context) -> Hint | None:
             )
         )
     if not commands:
-        return None
+        commands.append(
+            Command(
+                "Correct invalid identity environment overrides, then check "
+                "`git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`",
+                "Git resolves usable author and committer identities.",
+            )
+        )
     return Hint(
         id="commit-identity",
-        priority=Priority.WORKFLOW,
+        priority=Priority.ERROR_BLOCKED,
         text=(
             "Do you want to configure your [commit identity]"
             "(https://git-scm.com/docs/git-config"
             "#Documentation/git-config.txt-username "
             '"The name and email address Git records as the author of each '
-            'commit")? Git needs both a user name and an email address to '
-            "create commits. The `--global` option sets the default for all of "
+            'commit")? Git could not resolve a usable author or committer '
+            "identity. The `--global` option sets the default for all of "
             "your repositories; `--local` sets an identity for this repository "
             "only, overriding the global one. These settings identify commit "
-            "authors; they do not sign you into GitHub."
+            "authors; they do not sign you into GitHub. Identity environment "
+            "overrides take precedence; correct invalid overrides before "
+            "changing configuration."
         ),
         stage=(
-            "Your identity is stored in Git's configuration and is recorded in "
-            "every commit you create in the local repository."
+            "Git cannot resolve a usable author or committer identity to "
+            "record in a commit in the local repository."
         ),
         commands=commands,
     )

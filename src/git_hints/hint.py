@@ -268,14 +268,33 @@ def git_with_paths(
     # True to always separate the paths with `--`.
     separator: bool = False,
 ) -> str:
+    conflicting_environment = [
+        name
+        for name in (
+            "GIT_GLOB_PATHSPECS",
+            "GIT_NOGLOB_PATHSPECS",
+            "GIT_ICASE_PATHSPECS",
+        )
+        if os.environ.get(name, "").lower()
+        not in ("", "0", "false", "no", "off")
+    ]
     words = ["git"]
-    if any(any(char in path for char in "*?[:\\") for path in paths):
+    if conflicting_environment or any(
+        any(char in path for char in "*?[:\\") for path in paths
+    ):
         words.append("--literal-pathspecs")
     words += args
     if separator or any(path.startswith("-") for path in paths):
         words.append("--")
     words += [shell_quote(path) for path in paths]
-    return " ".join(words)
+    command = " ".join(words)
+    if conflicting_environment:
+        return (
+            f"Temporarily clear {', '.join(conflicting_environment)} in your "
+            f"shell, then run {command}; restore their previous values "
+            "afterward"
+        )
+    return command
 
 
 # Format up to `limit` items as code spans, appending "and N more" when items
