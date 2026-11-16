@@ -93,13 +93,44 @@ Final submission
 
 #### Contributions
 
- **Gazizuly Yerassyl (GitHub: `egazizuly`)**
+### Gazizuly Yerassyl
 
-Added five CLI argument-boundary regression tests in `tests/test_yerassyl_cli_boundaries.py`, verifying Git option forwarding, `--fetch` argument handling, and prevention of unintended repository initialization. All five tests passed using `python -m pytest tests/test_yerassyl_cli_boundaries.py -v -n 0`.
+GitHub userid: `egazizuly`
 
-Commit: `b1fbe69`.
+#### Contributions
 
-Pull Request: https://github.com/makuanyshbekov/literate-programming-fall-2024/pull/1
+Added five CLI argument-boundary regression tests in `tests/test_yerassyl_cli_boundaries.py`. They verify that Git options following the literal `git` token are forwarded with or without `--`, that a wrapper-level `--fetch` is rejected without executing `git init`, and that `--fetch` after `git` is handled by Git rather than by the wrapper. The five tests passed (`python -m pytest tests/test_yerassyl_cli_boundaries.py -v -n 0` on my Windows environment; independently rechecked with an equivalent pytest invocation: 5 passed). Original commit: `b1fbe69`; contribution PR: https://github.com/makuanyshbekov/literate-programming-fall-2024/pull/1.
+
+#### Specification review rounds
+
+| Round | Findings | Main changes made |
+| --- | --- | --- |
+| 1 | 0 specification defects in the reviewed CLI argument-boundary rules | Checked the `explain` command's requirements for the optional `--` separator, the first literal `git` token, forwarding of subsequent flags, and rejection of wrapper-level `--fetch`. No specification edit was needed in this limited scope. |
+| 2 | 0 additional specification defects in the reviewed scope | Rechecked those rules against the five concrete regression scenarios. Kept the specification unchanged to avoid unnecessary detail. |
+
+#### Last specification review
+
+LLM: ChatGPT (GPT-6). Review scope: only CLI argument boundaries in the `git-hints explain` section of `spec.md`.
+
+Review instruction: "Review the `git-hints explain` specification for contradictions or omissions concerning the optional `--` separator, recognition of the literal `git` command, forwarding options after `git`, and rejection of wrapper-level `--fetch`. Compare these rules against five regression scenarios. Report only substantive findings and avoid unnecessary specification changes."
+
+Last review output: No contradiction was identified in these focused rules. The specification distinguishes wrapper-level `--fetch` from options passed after `git`, requires an invalid wrapper option to fail before launching Git, and specifies that arguments from `git` onward are forwarded unchanged. No further specification change was recommended within this narrow scope. This does not constitute a review of the complete specification.
+
+#### Implementation review rounds
+
+| Round | Findings | Main changes made |
+| --- | --- | --- |
+| 1 | 1 test-coverage gap | Identified the need for dedicated regression tests of `git --version` forwarding, invalid wrapper-level `--fetch` with a potentially side-effecting `git init`, and `git --fetch` reaching Git. |
+| 2 | 0 further findings within the five reviewed scenarios | Added a parameterized test file with five cases, covering the optional separator in two tests each for forwarding and rejected wrapper options, plus one Git-owned `--fetch` case. All five tests passed. |
+
+#### Last implementation review
+
+LLM: ChatGPT (GPT-6). Review scope: the `explain` CLI handling in `src/git_hints/cli.py` and the added `tests/test_yerassyl_cli_boundaries.py`.
+
+Review instruction: "Check the `explain` argument handling and my regression tests against the specification. Confirm that options after `git` are forwarded unchanged, that an invalid wrapper-level `--fetch` prevents Git execution, and that `--fetch` following `git` is not interpreted as a wrapper option. Identify substantive remaining issues only."
+
+Last review output: The CLI registers `explain` with `allow_extra_args=True`, `ignore_unknown_options=True`, and `allow_interspersed_args=False`; it rejects wrapper-level `--fetch` before invoking the reactive Git runner. The regression tests check the intended behavior at the process boundary. Independent verification of the five added tests yielded **5 passed in 3.62s**. No additional issue was observed in these five scenarios. This focused result does not certify the rest of the implementation or the entire test suite.
+
 
 #### Specification review rounds
 
