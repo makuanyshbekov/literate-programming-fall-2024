@@ -12,6 +12,7 @@ Draft submission
 * Madi: I contributed to `git-hints explain` specification review,
   focusing on command validation, clarification, invalid `--fetch` handling, and repository
   redirection.
+ 
 
 ### Compiler test
 
@@ -92,7 +93,13 @@ Final submission
 
 #### Contributions
 
-(User's' contributions)
+ **Gazizuly Yerassyl (GitHub: `egazizuly`)**
+
+Added five CLI argument-boundary regression tests in `tests/test_yerassyl_cli_boundaries.py`, verifying Git option forwarding, `--fetch` argument handling, and prevention of unintended repository initialization. All five tests passed using `python -m pytest tests/test_yerassyl_cli_boundaries.py -v -n 0`.
+
+Commit: `b1fbe69`.
+
+Pull Request: https://github.com/makuanyshbekov/literate-programming-fall-2024/pull/1
 
 #### Specification review rounds
 
