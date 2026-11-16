@@ -268,6 +268,14 @@ def git_with_paths(
     # True to always separate the paths with `--`.
     separator: bool = False,
 ) -> str:
+    # Replacement decoding cannot prove which filename Git returned. Fall
+    # back conservatively, including for a real replacement-character name.
+    if any("\ufffd" in path for path in paths):
+        return (
+            "Run git status and choose the exact filenames manually for "
+            + " ".join(["git", *args])
+            + "; a filename could not be decoded faithfully"
+        )
     conflicting_environment = [
         name
         for name in (

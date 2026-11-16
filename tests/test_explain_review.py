@@ -17,7 +17,10 @@ from git_test_tools import (
 )
 from test_explain import REBASE_HINT, diverged_clones, explain, rejected_pushes
 
-from git_hints.hint import git_with_paths
+from git_hints.git import Repo
+from git_hints.hint import git_with_paths, render_block
+from git_hints.proactive import Context, merge_conflicts
+from git_hints.reactive import overwritten_paths
 
 
 @pytest.mark.parametrize("separator", [[], ["--"]])
@@ -148,7 +151,8 @@ def test_command_configuration_is_used_for_inspection(
     git(local, "fetch", "mirror")
     rejected_pushes(local, 4)
     result = explain(local, "-c", "branch.main.remote=mirror", "push")
-    assert REBASE_HINT in output_ids(result.stdout)
+    # A command-scoped upstream change starts its own count too.
+    assert REBASE_HINT not in output_ids(result.stdout)
     assert "git fetch mirror" in result.stdout
     assert "branch.main.remote=mirror" in result.stdout
     # Inspection and suggestions must not persist command-scoped settings.
@@ -229,3 +233,84 @@ def test_rebase_hint_does_not_assume_local_only_commits(
     )
     assert "git rebase --abort" not in block
     assert "git status" in block
+
+
+# Round 4: retain explicit pull destinations and reset changed upstreams.
+@pytest.mark.parametrize("configured_upstream", [True, False])
+def test_divergent_pull_preserves_explicit_destination(
+    tmp_path_factory: pytest.TempPathFactory, configured_upstream: bool
+) -> None:
+    remote, local, _ = diverged_clones(tmp_path_factory)
+    git(local, "remote", "add", "other", str(remote))
+    if not configured_upstream:
+        git(local, "branch", "--unset-upstream")
+    result = explain(local, "pull", "--ff-only", "other", "main")
+    assert result.returncode != 0
+    block = blocks(result.stdout)["diverged"]
+    assert "Command: git pull --no-rebase other main" in block
+    assert "Command: Caution: git pull --rebase other main" in block
+    assert "<remote>" not in block
+    assert "git push" not in block
+    assert REBASE_HINT not in output_ids(result.stdout)
+
+
+@pytest.mark.parametrize("change", ["remote", "branch"])
+def test_counter_resets_when_upstream_changes(
+    tmp_path_factory: pytest.TempPathFactory, change: str
+) -> None:
+    remote, local, other = diverged_clones(tmp_path_factory)
+    rejected_pushes(local, 4)
+    head = git(local, "rev-parse", "HEAD").stdout
+    if change == "remote":
+        git(local, "remote", "add", "mirror", str(remote))
+        git(local, "fetch", "mirror")
+        git(local, "branch", "--set-upstream-to=mirror/main")
+        push = ["push", "mirror", "HEAD:main"]
+    else:
+        git(other, "push", "origin", "HEAD:other")
+        git(local, "fetch", "origin")
+        git(local, "branch", "--set-upstream-to=origin/other")
+        push = ["push", "origin", "HEAD:other"]
+    for index in range(5):
+        result = explain(local, *push)
+        assert result.returncode != 0
+        assert (REBASE_HINT in output_ids(result.stdout)) == (index == 4)
+    assert git(local, "rev-parse", "HEAD").stdout == head
+
+
+def test_undecodable_conflict_path_gets_manual_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows cannot create this POSIX filename, so inject captured Git bytes
+    # at the subprocess boundary and exercise the real parser and hint builder.
+    import subprocess
+
+    monkeypatch.setattr(
+        "git_hints.git.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, b"bad\xff.txt\0", b""
+        ),
+    )
+    repo = Repo(tmp_path)
+    monkeypatch.setattr(repo, "prefix", "")
+    hint = merge_conflicts(Context(repo, fetched=False))
+    assert hint is not None
+    block = "\n".join(render_block(hint))
+    command_lines = [
+        line for line in block.splitlines() if line.startswith("Command:")
+    ]
+    assert all("\ufffd" not in line for line in command_lines)
+    assert any(
+        "manually" in line and "git status" in line for line in command_lines
+    )
+
+
+@pytest.mark.parametrize("path", ['"tab\\tname.txt"', "bad\ufffd.txt"])
+def test_unreliable_diagnostic_paths_are_not_used_as_operands(
+    path: str,
+) -> None:
+    diagnostic = (
+        "error: Your local changes to the following files would be overwritten "
+        f"by merge:\n\t{path}\nPlease commit your changes or stash them."
+    )
+    assert overwritten_paths(diagnostic) == []

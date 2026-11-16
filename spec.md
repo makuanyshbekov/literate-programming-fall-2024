@@ -1647,10 +1647,13 @@ guidance immediately, without waiting for the repeated-failure threshold.
 Reuse the proactive hint's documentation, stage explanation, and integration
 choices, with `error/blocked` priority and `caution` safety. Recognize the failure
 from its diagnostic rather than requiring cached ahead/behind counts. If the
-pull destination is uncertain, use placeholders instead of assuming the upstream.
+failed pull explicitly names a reliably identified repository and branch, retain
+them in the suggested integration commands instead of defaulting to the upstream.
+If the destination is uncertain, use placeholders. Do not append an unrelated
+default push to explicit-destination advice.
 Keep the repeated-failure suggestion supplementary and display it afterward.
 Test that the first qualifying failed pull receives this guidance and that an
-unrelated failure does not.
+unrelated failure does not; include an explicit destination without an upstream.
 
 Diagnostic-based recognition supports English Git messages; display unrecognized
 diagnostics on stderr without guessing a matching hint. In the tests below,
@@ -1988,9 +1991,11 @@ solely to check its hints.
   git-hints/integration-failures.json` in the target repository.
 
   Key each record by the full branch reference returned by `git symbolic-ref
-  --quiet HEAD`. Store the failure count and the current `HEAD` commit ID. If
-  the state file is missing or unreadable, initialize the count to zero. Write
-  updates atomically using a temporary file followed by a rename.
+  --quiet HEAD`. Store the failure count, current `HEAD` commit ID, and configured
+  upstream remote and merge ref(s). Treat older records without upstream metadata
+  as a zero count. If the state file is missing or unreadable, initialize the
+  count to zero. Write updates atomically using a temporary file followed by a
+  rename.
 
   Count only the following failures from commands executed through `git-hints
   explain`:
@@ -2024,6 +2029,7 @@ solely to check its hints.
   * A pull or push through `git-hints explain` succeeds.
   * The hint is displayed.
   * The stored `HEAD` commit ID differs from the current `HEAD`.
+  * The configured upstream remote or merge ref(s) differ from the stored values.
 
   Other commands and failures that do not qualify leave the count unchanged.
 
@@ -2065,9 +2071,9 @@ solely to check its hints.
   `make_temps()`, and `make_repo()` as appropriate. Unless otherwise stated,
   recreate the two diverged clones described in steps 1–4 above. Invoke every
   tested push/pull through a separate `git-hints explain -- ...` process.
-  Inspect Git's nonzero exit code and stderr and verify that IDs are present or
-  absent as complete `ID: <id>` lines. The tests may also use the global
-  `--ids-only` option before `explain` to check reactive IDs.
+  Inspect Git's nonzero exit code and stderr. Match complete `ID: <id>` lines
+  in normal output, or complete `<id>` lines when using the global `--ids-only`
+  option before `explain`.
 
   1. **Mixed eligible failures:** Produce three qualifying rejected pushes in
      `local`. Run `git-hints explain -- git pull --ff-only` on the diverged
@@ -2103,10 +2109,12 @@ solely to check its hints.
      rejected push triggers the hint. An unrelated successful Git command does
      not clear the counter.
 
-  6. **Changed HEAD:** Produce four qualifying failures, create and commit a
-     different local file, and confirm that `HEAD` now has a new commit ID.
+  6. **Changed HEAD or upstream:** Produce four qualifying failures, create and
+     commit a different local file, and confirm that `HEAD` has a new commit ID.
      Reject another push and verify that the rebase hint is absent because the
-     stored counter resets after the `HEAD` change.
+     stored counter resets after the `HEAD` change. Separately, change the
+     configured upstream after four failures without changing `HEAD`; require
+     five new qualifying failures before the hint appears for that destination.
 
   7. **Operation in progress:** Set up a fresh diverged repository using the
      earlier test setup. Fetch the remote changes with `git fetch origin`.
@@ -2225,8 +2233,11 @@ failure or that Git cannot be launched.
 cannot be launched or an unexpected inspection failure occurs.
 
 Decode Git output as UTF-8 (`encoding="utf-8", errors="replace"`), not with the
-locale default. When a path list is parsed, use `-z` or `-c
-core.quotePath=false`.
+locale default. Parse concrete filename lists with `-z`; `core.quotePath=false`
+does not disable all Git filename escaping. If replacement decoding may have
+altered a filename, give manual `git status` guidance instead of substituting it
+into a command. Treat quoted or undecodable paths in diagnostics as unreliable
+and omit that file list, as allowed by the reactive hint's existing fallback.
 
 Testing
 -------

@@ -191,7 +191,12 @@ def overwritten_paths(stderr: str) -> list[str] | None:
             for following in lines[index + 1 :]:
                 if not following.startswith("\t"):
                     break
-                paths.append(following[1:])
+                path = following[1:]
+                # Diagnostic filenames may be C-quoted or decoded with
+                # replacement. Neither is a reliable concrete shell operand.
+                if path.startswith('"') or "\ufffd" in path:
+                    return []
+                paths.append(path)
             return paths
     return None
 
@@ -578,23 +583,48 @@ def pull_diverged(failure: Failure) -> Hint | None:
     ):
         return None
     hint = divergence_advice()
-    if failure.repo and integrates_upstream(
+    positionals = positional_arguments(
+        failure.command.arguments, PULL_OPTIONS_WITH_VALUE
+    )
+    uses_upstream = failure.repo is not None and integrates_upstream(
         failure.repo, failure.command, failure.stderr
-    ):
+    )
+    if not positionals and uses_upstream:
         return replace(hint, priority=Priority.ERROR_BLOCKED)
-    # The diagnostic proves divergence, but not which history to integrate.
-    # Keep explicit placeholders instead of silently choosing the upstream.
+    # Preserve simple explicit destinations. Complex fetch refspecs still
+    # need confirmation rather than being copied into integration advice.
+    known_destination = (
+        len(positionals) == 2
+        and not positionals[1].startswith(("+", "^"))
+        and not any(char in positionals[1] for char in ":*?[]")
+    ) or (len(positionals) == 1 and uses_upstream)
+    destination = (
+        " ".join(shell_quote(word) for word in positionals)
+        if known_destination
+        else "<remote> <branch>"
+    )
     return replace(
         hint,
         priority=Priority.ERROR_BLOCKED,
-        text=hint.text + " Confirm the pull remote and branch before retrying.",
+        text=(
+            "The attempted [git pull]"
+            "(https://git-scm.com/docs/git-pull#_description "
+            '"Fetch and integrate changes into the current branch") found '
+            "divergent histories. Choose whether to merge or replay local "
+            "commits on the selected history."
+            + (
+                " Confirm the pull remote and branch before retrying."
+                if not known_destination
+                else ""
+            )
+        ),
         commands=(
             Command(
-                "`git pull --no-rebase <remote> <branch>`",
+                code(f"git pull --no-rebase {destination}"),
                 "Git integrates the selected history; resolve any conflicts.",
             ),
             Command(
-                "`git pull --rebase <remote> <branch>`",
+                code(f"git pull --rebase {destination}"),
                 "Git replays local commits on the selected history.",
                 Safety.CAUTION,
             ),
@@ -617,8 +647,8 @@ REACTIVE_CHECKS: list[Callable[[Failure], Hint | None]] = [
 # After five qualifying failures to integrate with the upstream branch, suggest
 # `git pull --rebase`. Counts are kept per local branch, keyed by its full ref,
 # in a JSON file under the Git directory (so that linked worktrees each have
-# their own), along with the commit at HEAD: a new commit means the user has
-# changed course, so the count starts over.
+# their own), along with HEAD and the configured upstream. Changing either
+# starts a new count; old records without upstream metadata start over too.
 FAILURE_COUNTS_PATH = "git-hints/integration-failures.json"
 FAILURE_THRESHOLD = 5
 
@@ -715,7 +745,18 @@ def record_integration_outcome(
     path = repo.git_paths(FAILURE_COUNTS_PATH)[0]
     counts = load_counts(path)
     record = counts.get(branch_ref)
-    count = record["count"] if record and record["head"] == head else 0
+    branch = branch_ref.removeprefix("refs/heads/")
+    upstream_identity = {
+        "remote": repo.config(f"branch.{branch}.remote"),
+        "merge": repo.config_all(f"branch.{branch}.merge"),
+    }
+    count = (
+        record["count"]
+        if record
+        and record["head"] == head
+        and record.get("upstream") == upstream_identity
+        else 0
+    )
     assert isinstance(count, int)
     show = False
     if returncode == 0:
@@ -745,7 +786,11 @@ def record_integration_outcome(
         show = count >= FAILURE_THRESHOLD
         if show:
             count = 0
-    counts[branch_ref] = {"count": count, "head": head}
+    counts[branch_ref] = {
+        "count": count,
+        "head": head,
+        "upstream": upstream_identity,
+    }
     save_counts(path, counts)
     return show
 
